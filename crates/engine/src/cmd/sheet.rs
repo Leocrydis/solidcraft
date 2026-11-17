@@ -131,6 +131,8 @@ pub static COMMANDS: &[CommandSpec] = &[
          `corner_relief` across; tear none, each bend's end is cut straight from the corner to its flange's end; default notch); \
          angle_display?: bend|included (how the DXF bend notes read the bend angles: the bend angle, default, or the included angle \
          left between the bend's sides, 180° less it; the bend table gives both, and a flange's `angle` is always the bend angle); \
+         unfold_method?: k_factor|deduction|allowance (where the bends' K-factor comes from: k_factor, default, or worked out from \
+         unfold_value, a press brake chart's 90° bend deduction or allowance for this thickness and radius); unfold_value? (length expression); \
          active?: bool; delete?: bool",
     ),
     CommandSpec::new("sheet.rules", "List Sheet Metal Rules", crate::checked!("sheet.rules", list_rules))
@@ -374,8 +376,18 @@ fn rule_param(s: &Session, p: &Value, cmd: &str) -> Result<Option<String>> {
 
 /// Sheet values a flange takes from its rule. Passing one to `sheet.flange` is refused rather
 /// than ignored, so a script never gets a part of another thickness than it asked for.
-const RULE_ONLY: [&str; 8] =
-    ["thickness", "k_factor", "bend_radius", "relief_width", "relief_depth", "corner_relief", "corner_relief_shape", "hem_gap"];
+const RULE_ONLY: [&str; 10] = [
+    "thickness",
+    "k_factor",
+    "bend_radius",
+    "relief_width",
+    "relief_depth",
+    "corner_relief",
+    "corner_relief_shape",
+    "hem_gap",
+    "unfold_method",
+    "unfold_value",
+];
 
 /// The two rule values an edge flange may set for itself: the corner relief.
 const EDGE_RELIEF: [&str; 2] = ["corner_relief", "corner_relief_shape"];
@@ -770,6 +782,10 @@ fn rules(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(display) = p.get("angle_display").filter(|v| !v.is_null()) {
         let display = display.as_str().and_then(sheet::AngleDisplay::parse);
         rule.angle_display = display.ok_or_else(|| bad(cmd, "`angle_display` must be bend or included"))?.name().into();
+    }
+    if let Some(method) = p.get("unfold_method").filter(|v| !v.is_null()) {
+        let method = method.as_str().and_then(sheet::UnfoldMethod::parse);
+        rule.unfold_method = method.ok_or_else(|| bad(cmd, "`unfold_method` must be k_factor, deduction or allowance"))?.name().into();
     }
     let (vals, _) = s.doc.param_values();
     let values = s.doc.rule_values(&vals, &rule).map_err(|e| bad(cmd, e.to_string()))?;
