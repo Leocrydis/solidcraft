@@ -6,6 +6,7 @@ use solidcraft_engine::doc::physical_material::{
 };
 use solidcraft_engine::doc::{Document, UserMaterial, appearance::Look};
 
+use crate::ui_kit::BackingTooltipExt as _;
 use crate::{SolveApp, ui_kit};
 use solidcraft_ui_text::tr;
 
@@ -22,6 +23,8 @@ const KINDS: [&str; 9] = [
 ];
 const FAMILIES: [Family; 5] = [Family::Other, Family::Metal, Family::Polymer, Family::Wood, Family::Glass];
 const SOURCE_KINDS: [SourceKind; 4] = [SourceKind::UserSupplied, SourceKind::Measurement, SourceKind::PublicReference, SourceKind::Illustrative];
+/// The table's filter: every material, the design's own, or the built-in library's.
+pub(crate) const SHOW: [&str; 3] = ["material.manager.show_all", "material.manager.show_design", "material.manager.show_builtin"];
 
 #[derive(Clone, Debug, Default)]
 pub struct Editor {
@@ -34,6 +37,11 @@ pub struct Editor {
     chosen_material: Option<String>,
     observed_index: Option<usize>,
     mixed_materials: bool,
+    /// Whether the dialog opened with no bodies (to manage materials rather than assign one):
+    /// the table of all materials then starts open. Set once, on the first selection sync.
+    pub(crate) manager: Option<bool>,
+    /// Which materials the table lists: an index into [`SHOW`].
+    pub(crate) show: usize,
 }
 
 impl Editor {
@@ -41,6 +49,7 @@ impl Editor {
     /// choice by name: inserting, renaming or deleting a library row must not
     /// silently turn it into another material at the same ordinal.
     pub(crate) fn sync_selection(&mut self, doc: &Document, bodies: &[String], index: &mut usize) {
+        self.manager.get_or_insert(bodies.is_empty());
         if self.editing() {
             return;
         }
@@ -489,7 +498,24 @@ pub(crate) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, index: &mut usize, edi
             if edit.clicked() {
                 editor.begin(&app.session.doc, selected, false);
             }
+            // Only the design's own materials can be deleted, and only while no body uses one.
+            let own = selected.and_then(|name| app.session.doc.user_material(name)).map(|m| m.name.clone());
+            let used = own.as_deref().map_or(0, |name| bodies_using(&app.session.doc, name));
+            let mut delete = ui_kit::button(ui, tr("Delete"), ui_kit::Button::Enabled(own.is_some() && used == 0));
+            crate::scenario::publish_handle("material:delete", delete.rect.center());
+            if used > 0 {
+                delete =
+                    delete.backing_on_disabled_hover_text(solidcraft_ui_text::format("material.manager.in_use", &[("count", &used.to_string())]));
+            }
+            if delete.clicked()
+                && let Some(name) = own
+            {
+                delete_material(app, index, editor, &name);
+            }
         });
+        if editor.draft.is_none() {
+            materials_table(app, ui, index, editor);
+        }
         if editor.draft.is_none()
             && let Some(name) = selected
         {
@@ -554,4 +580,165 @@ pub(crate) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, index: &mut usize, edi
     if let Some(note) = &editor.note {
         ui_kit::text(ui, note, ui_kit::Text::Report("physical_saved", false));
     }
+}
+
+/// How many bodies have `material` assigned (names compare without ASCII case, as the design's
+/// own lookups do).
+fn bodies_using(doc: &Document, material: &str) -> usize {
+    doc.materials.values().filter(|assigned| assigned.trim().eq_ignore_ascii_case(material.trim())).count()
+}
+
+/// Delete one of the design's own materials (one undo step) and let the choice follow the
+/// targets again; a refusal shows where Save's errors show.
+fn delete_material(app: &mut SolveApp, index: &mut usize, editor: &mut Editor, name: &str) {
+    match app.run("material.delete", json!({ "material": name })) {
+        Ok(_) => {
+            *index = usize::MAX;
+            editor.chosen_material = None;
+            editor.observed_index = None;
+            editor.error = None;
+            editor.note = None;
+        }
+        Err(error) => editor.error = Some(error),
+    }
+}
+
+/// One row of the table: a material, whether this design defines it, and what its card says.
+pub(crate) struct MaterialRow {
+    pub(crate) name: String,
+    pub(crate) own: bool,
+    pub(crate) family: Option<Family>,
+    pub(crate) density_g_cm3: Option<f64>,
+    /// Young's modulus (Pa); E1 for an orthotropic card.
+    pub(crate) modulus_pa: Option<f64>,
+    pub(crate) yield_pa: Option<f64>,
+}
+
+/// The materials the table lists for filter `show` (an index into [`SHOW`]), in the drop-down's
+/// order: the built-in library, then the design's own.
+pub(crate) fn table_rows(doc: &Document, show: usize) -> Vec<MaterialRow> {
+    doc.material_names()
+        .into_iter()
+        .filter_map(|name| {
+            let user = doc.user_material(&name).filter(|m| m.name == name);
+            let own = user.is_some();
+            let listed = match show {
+                1 => own,
+                2 => !own,
+                _ => true,
+            };
+            if !listed {
+                return None;
+            }
+            let card = user.and_then(|m| m.physical_card.as_ref()).map(|record| record.card());
+            let value = |pick: fn(&PropertyData) -> Option<f64>| card.and_then(|c| c.properties.iter().find_map(|p| pick(&p.data)));
+            Some(MaterialRow {
+                own,
+                family: card.map(|c| c.family),
+                density_g_cm3: doc.material_density(&name),
+                modulus_pa: value(|data| match data {
+                    PropertyData::Elasticity { model: Elasticity::Isotropic { young_modulus_pa, .. } } => Some(*young_modulus_pa),
+                    PropertyData::Elasticity { model: Elasticity::Orthotropic { young_moduli_pa, .. } } => Some(young_moduli_pa[0]),
+                    _ => None,
+                }),
+                yield_pa: value(|data| match data {
+                    PropertyData::YieldStrength { pa } => Some(*pa),
+                    _ => None,
+                }),
+                name,
+            })
+        })
+        .collect()
+}
+
+/// A value for the table: at most four significant figures, without trailing zeros; an unknown
+/// value is a dash, never 0.
+pub(crate) fn figure(value: Option<f64>) -> String {
+    let Some(v) = value.filter(|v| v.is_finite()) else { return "\u{2014}".into() };
+    if v == 0.0 {
+        return "0".into();
+    }
+    let decimals = (3 - v.abs().log10().floor() as i32).clamp(0, 9) as usize;
+    let text = format!("{v:.decimals$}");
+    if text.contains('.') { text.trim_end_matches('0').trim_end_matches('.').to_string() } else { text }
+}
+
+fn family_label(family: Option<Family>) -> String {
+    match family {
+        Some(Family::Metal) => tr("material.editor.metal").to_string(),
+        Some(Family::Polymer) => tr("material.editor.polymer").to_string(),
+        Some(Family::Wood) => tr("material.editor.wood").to_string(),
+        Some(Family::Glass) => tr("material.editor.glass").to_string(),
+        Some(Family::Other) => tr("material.editor.other").to_string(),
+        None => "\u{2014}".into(),
+    }
+}
+
+/// Every material in one table, filtered by where it comes from. Clicking a row chooses that
+/// material, as the drop-down does, for New, Duplicate, Edit, Delete and the dialog's OK.
+/// Opened with no bodies, the table starts open; opened to assign, it starts folded, so the
+/// assign dialog looks as before. Each case remembers its own state.
+fn materials_table(app: &mut SolveApp, ui: &mut egui::Ui, index: &mut usize, editor: &mut Editor) {
+    let manage = editor.manager.unwrap_or(false);
+    let id = if manage { "physical:materials:manage" } else { "physical:materials:assign" };
+    let names = app.session.doc.material_names();
+    ui_kit::section_count(ui, id, tr("material.manager.title"), manage, Some(names.len()), |ui| {
+        let labels = SHOW.map(tr);
+        ui_kit::choice_row(ui, tr("material.manager.show"), "physical:show", &mut editor.show, &labels);
+        let rows = table_rows(&app.session.doc, editor.show);
+        let t = solidcraft_theme::Tokens::get();
+        let headings = [
+            solidcraft_ui_text::tr_label("Material"),
+            tr("material.manager.family"),
+            tr("material.manager.density"),
+            tr("material.manager.modulus"),
+            tr("material.manager.yield"),
+        ];
+        let columns: Vec<_> = headings
+            .iter()
+            .enumerate()
+            .map(|(i, label)| {
+                // Every column shares the card's width, so the table fits the manager's
+                // fixed width without scrolling sideways; the name column gets the most.
+                if i == 0 {
+                    ui_kit::Column::new(label, 1.6).flex().min_content_width(t.form_label_width)
+                } else {
+                    ui_kit::Column::new(label, 1.0).flex()
+                }
+            })
+            .collect();
+        ui_kit::table_custom(ui, "physical_materials", &columns, tr("manage.empty"), |ui, table| {
+            table.headers(ui, |_, _| false);
+            for row in &rows {
+                let selected = names.get(*index).is_some_and(|name| name == &row.name);
+                let tip = tr(if row.own { "material.manager.design_row" } else { "material.manager.builtin_row" });
+                // A cell's text takes its own clicks, so a click anywhere on the row counts.
+                let mut clicked = false;
+                let response = table.row(ui, &row.name, selected, |cells| {
+                    let values = [
+                        family_label(row.family),
+                        figure(row.density_g_cm3),
+                        figure(row.modulus_pa.map(|pa| pa / 1e9)),
+                        figure(row.yield_pa.map(|pa| pa / 1e6)),
+                    ];
+                    cells.cell(|ui| {
+                        let style = if selected { ui_kit::Text::SelectedNameCell } else { ui_kit::Text::NameCell(false) };
+                        let name = ui_kit::text(ui, &row.name, style);
+                        crate::scenario::publish_handle(&format!("material:row:{}", row.name), name.rect.center());
+                        clicked |= name.backing_on_hover_text(tip).clicked();
+                    });
+                    for value in &values {
+                        cells.cell(|ui| clicked |= ui_kit::text(ui, value, ui_kit::Text::Cell).backing_on_hover_text(tip).clicked());
+                    }
+                });
+                if (response.backing_on_hover_text(tip).clicked() || clicked)
+                    && let Some(i) = names.iter().position(|name| name == &row.name)
+                {
+                    *index = i;
+                    editor.chosen_material = Some(row.name.clone());
+                    editor.observed_index = Some(i);
+                }
+            }
+        });
+    });
 }

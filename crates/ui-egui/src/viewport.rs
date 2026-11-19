@@ -16851,6 +16851,9 @@ mod tests {
             h.app.preferences.smooth_wheel_zoom = smooth;
             h.app.preferences.zoom_to_cursor = false;
             h.call("engine.execute", json!({"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20}}));
+            // Opened to assign (a body selected), the dialog keeps its table of all materials
+            // folded, so the material list still hangs past the card over the model.
+            h.app.session.selection = vec![solidcraft_engine::Sel::Body { name: "Body1".into() }];
             h.call("ui.start", json!({"command": "material.assign"}));
             let field = handle_at("dialog:Material").expect("the dialog's material field");
             let field = json!({"x": field.x, "y": field.y});

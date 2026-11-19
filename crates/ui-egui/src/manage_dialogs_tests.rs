@@ -232,6 +232,124 @@ fn physical_material_panel_reviews_saved_si_card_without_changing_the_design() {
     assert_eq!(h.app.run("component.properties", json!({})).unwrap(), mass);
 }
 
+fn material_rows() -> usize {
+    scenario::handles("material:row:").len()
+}
+
+fn material_show(h: &mut Harness, show: usize) {
+    let dialogs::Kind::Material { editor, .. } = &mut h.app.dialog.as_mut().unwrap().kind else { panic!("physical material") };
+    editor.show = show;
+    h.frames(2);
+}
+
+fn chosen_material(h: &Harness) -> Option<String> {
+    let dialogs::Kind::Material { index, .. } = &h.app.dialog.as_ref().unwrap().kind else { panic!("physical material") };
+    h.app.session.doc.material_names().get(*index).cloned()
+}
+
+/// Opened with nothing selected, Physical Material manages materials: a table lists every one
+/// with its family, density and card values in readable units; a row chooses a material for
+/// Edit and Delete; Delete removes only an unused material of the design's own, in one undo step.
+#[test]
+fn physical_material_opened_without_bodies_manages_every_material_in_a_table() {
+    let mut h = fixture();
+    let card = json!({"schema_version":1,"designation":"5052-H32","family":"metal",
+        "sources":[{"id":"shop","title":"Shop test sheet","kind":"user_supplied"}],
+        "properties":[{"source_id":"shop","data":{"kind":"elasticity","model":{"symmetry":"isotropic","young_modulus_pa":70.3e9,"poisson_ratio":0.33}}},
+            {"source_id":"shop","data":{"kind":"yield_strength","pa":193e6}}]});
+    h.app.run("material.create", json!({"name":"Shop sheet","density_g_cm3":2.68,"physical_card":card})).unwrap();
+    let names = h.app.session.doc.material_names();
+    h.app.session.selection.clear();
+    h.app.start("material.assign");
+    h.frames(3);
+    assert_eq!(material_rows(), names.len(), "the table starts open and lists every material");
+    // It fits the manager's fixed width: no sideways scrolling.
+    let viewport = scenario::rect_of("dialog:table:physical_materials:viewport").unwrap().width();
+    let content = scenario::count_of("dialog:table:physical_materials:content_width").unwrap() as f32;
+    assert!(content <= viewport + 0.5, "table {content} wider than the card's {viewport}");
+    for text in ["Metal", "2.68", "70.3", "193", "2.7"] {
+        assert!(h.widget(text).is_some(), "{text}");
+    }
+    assert_eq!(scenario::count_of("dialog:ok:enabled"), Some(0.0), "nothing to assign to");
+    // Where a material comes from filters the table.
+    material_show(&mut h, 1);
+    assert_eq!(material_rows(), 1);
+    material_show(&mut h, 2);
+    assert_eq!(material_rows(), names.len() - 1);
+    material_show(&mut h, 0);
+    // A built-in material is chosen by its row but cannot be deleted.
+    let undo = h.app.session.undo.len();
+    h.step(&json!({"click":{"handle":"material:row:Aluminum"}})).unwrap();
+    h.frames(2);
+    assert_eq!(chosen_material(&h).as_deref(), Some("Aluminum"));
+    h.step(&json!({"click":{"handle":"material:delete"}})).unwrap();
+    h.frames(2);
+    assert_eq!(h.app.session.doc.material_names(), names);
+    // The design's own material: Edit opens the editor on it and hides the table.
+    h.step(&json!({"click":{"handle":"material:row:Shop sheet"}})).unwrap();
+    h.frames(2);
+    assert_eq!(chosen_material(&h).as_deref(), Some("Shop sheet"));
+    h.step(&json!({"click":{"handle":"material:edit"}})).unwrap();
+    h.frames(2);
+    assert_eq!(physical_editor(&mut h).draft.as_ref().map(|d| d.name.clone()).as_deref(), Some("Shop sheet"));
+    assert_eq!(material_rows(), 0, "the editor replaces the table");
+    h.step(&json!({"click":{"handle":"material:discard"}})).unwrap();
+    h.frames(2);
+    // In use by a body, it cannot be deleted.
+    h.app.run("material.assign", json!({"bodies":["Body1"],"material":"Shop sheet"})).unwrap();
+    h.frames(2);
+    let undo_used = h.app.session.undo.len();
+    h.step(&json!({"click":{"handle":"material:delete"}})).unwrap();
+    h.frames(2);
+    assert!(h.app.session.doc.user_material("Shop sheet").is_some());
+    assert_eq!(h.app.session.undo.len(), undo_used);
+    // Unused, it is deleted in one undo step, and undo brings it back.
+    h.app.run("material.assign", json!({"bodies":["Body1"],"material":"Steel"})).unwrap();
+    h.frames(2);
+    let before = h.app.session.undo.len();
+    assert!(before > undo);
+    h.step(&json!({"click":{"handle":"material:delete"}})).unwrap();
+    h.frames(2);
+    assert!(h.app.session.doc.user_material("Shop sheet").is_none());
+    assert_eq!(h.app.session.undo.len(), before + 1);
+    assert_eq!(material_rows(), names.len() - 1);
+    h.app.run("edit.undo", json!({})).unwrap();
+    assert!(h.app.session.doc.user_material("Shop sheet").is_some());
+    h.step(&json!({"click":{"handle":"dialog:cancel"}})).unwrap();
+}
+
+/// Opened with bodies selected, Physical Material looks as before: the table of all materials
+/// starts folded, and OK assigns the chosen material to those bodies.
+#[test]
+fn physical_material_opened_with_bodies_keeps_the_table_folded_and_assigns() {
+    let mut h = fixture();
+    h.app.start("material.assign");
+    h.frames(3);
+    assert_eq!(material_rows(), 0, "folded");
+    assert!(scenario::rect_of("dialog:section:All materials").is_some());
+    h.step(&json!({"click":{"handle":"dialog:Material"}})).unwrap();
+    h.step(&json!({"click":{"handle":"dialog:Material:Copper"}})).unwrap();
+    h.frames(2);
+    let undo = h.app.session.undo.len();
+    h.step(&json!({"click":{"handle":"dialog:ok"}})).unwrap();
+    assert_eq!(h.app.session.doc.body_material("Body1"), "Copper");
+    assert_eq!(h.app.session.undo.len(), undo + 1);
+}
+
+#[test]
+fn material_table_figures_keep_four_significant_figures_and_unknown_is_a_dash() {
+    use crate::material_editor::figure;
+    assert_eq!(figure(None), "\u{2014}");
+    assert_eq!(figure(Some(f64::NAN)), "\u{2014}");
+    assert_eq!(figure(Some(0.0)), "0");
+    assert_eq!(figure(Some(2.68)), "2.68");
+    assert_eq!(figure(Some(70.3e9 / 1e9)), "70.3");
+    assert_eq!(figure(Some(193.0)), "193");
+    assert_eq!(figure(Some(205_000.0)), "205000");
+    assert_eq!(figure(Some(0.001_234_56)), "0.001235");
+    assert_eq!(figure(Some(-1.5)), "-1.5");
+}
+
 #[test]
 fn appearance_is_dense_and_preserves_color_opacity_and_targets() {
     form("appearance.assign", &["Objects", "Apply To", "Colour", "Opacity", "Library", "Search"]);
