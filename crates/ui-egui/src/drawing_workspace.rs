@@ -1962,6 +1962,11 @@ mod tests {
         assert!(h.widget("Parent view").is_none(), "a base view has no parent");
         assert_eq!(h.widgets("Default").len(), 2, "visual style and tangent edges");
         assert!(h.widget("From the drawing").is_some(), "the line group");
+        let lefts: Vec<(&str, f32)> = ["Name", "Part number", "Material", "Visual style", "Tangent edges", "Line group", "Scale"]
+            .into_iter()
+            .map(|label| (label, crate::scenario::rect_of(&format!("dialog:control:{label}")).map_or(f32::NAN, |rect| rect.left())))
+            .collect();
+        assert!(lefts.iter().all(|(_, left)| (left - lefts[0].1).abs() < 0.5), "every value starts in one column: {lefts:?}");
     }
 
     /// Tangent edges and line group change from the panel: OK sends both in one `drawing.view.edit`,
@@ -2024,6 +2029,28 @@ mod tests {
         h.settle();
         for text in ["Projected View", "Parent view", "Front View", "Right", "Follows the parent view", "Show"] {
             assert!(h.widget(text).is_some(), "the panel shows {text}");
+        }
+    }
+
+    /// Edit View opened with no view picked lists the sheet's views by the names the browser and
+    /// the panel's Name row give them, not by their numbers.
+    #[test]
+    fn the_edit_view_picker_names_each_view_as_the_browser_does() {
+        use serde_json::json;
+        use solidcraft_engine::doc::ids;
+
+        let mut h = Harness::new();
+        let base = steel_plate_drawing(&mut h);
+        h.app.run("drawing.view.projected", json!({"parent": ids::encode(base), "side": "right"})).unwrap();
+        h.settle();
+        close_panel(&mut h.app);
+        h.app.drawing_workspace.options = Some(Tool::Edit(None));
+        h.settle();
+        assert!(h.widget("View 1").is_none(), "no view is listed by number");
+        h.step(&json!({"click": {"handle": "dialog:View"}})).unwrap();
+        h.frames(2);
+        for name in ["Front View", "Right View"] {
+            assert!(crate::scenario::rect_of(&format!("dialog:View:{name}")).is_some(), "the picker lists {name}");
         }
     }
 }

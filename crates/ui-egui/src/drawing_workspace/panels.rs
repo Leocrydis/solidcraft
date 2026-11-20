@@ -304,7 +304,13 @@ fn set_by_note(ui: &mut egui::Ui, by: SetBy) {
 /// read only; Display, its visual style, tangent edges and line group, each with who gives it now
 /// (the view itself, its parent, its sheet, the drawing or the default); and its scale. Apply and
 /// OK send what changed through `drawing.view.edit`, in one undo step. Returns whether to close.
+/// One inset kit form, so every row, the view picker's too, shares one label column and each
+/// value starts at the same x whatever its label's length.
 pub(super) fn view_editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Option<u64>) -> bool {
+    super::inset(ui, |ui| ui_kit::scope(ui, |ui| view_editor_rows(app, ui, selected)))
+}
+
+fn view_editor_rows(app: &mut SolveApp, ui: &mut egui::Ui, selected: Option<u64>) -> bool {
     let sheet = active_sheet(app);
     let drawing = app.session.drawing("drawing.inspect").ok();
     let available: Vec<_> =
@@ -314,8 +320,15 @@ pub(super) fn view_editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Optio
         .and_then(|id| available.iter().position(|view| *view == id))
         .unwrap_or_default();
     if selected.is_none() && available.len() > 1 {
-        let labels: Vec<_> =
-            (1..=available.len()).map(|number| solidcraft_ui_text::format("ui.drawing_browser_view", &[("number", &number.to_string())])).collect();
+        // Each view by the name the browser and the panel's Name row give it.
+        let labels: Vec<_> = available
+            .iter()
+            .zip(1..)
+            .map(|(id, number)| {
+                super::browser::name_of(app, *id)
+                    .unwrap_or_else(|| solidcraft_ui_text::format("ui.drawing_browser_view", &[("number", &number.to_string())]))
+            })
+            .collect();
         let labels: Vec<_> = labels.iter().map(String::as_str).collect();
         ui_kit::choice_row(ui, tr("ui.drawing_panel.view"), "drawing:edit:view", &mut index, &labels);
     }
@@ -362,7 +375,7 @@ pub(super) fn view_editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Optio
     let mut tangent_index = tangents.iter().position(|candidate| *candidate == edit.tangent).unwrap_or_default();
     let groups: Vec<LineGroup> = LineGroup::NAMES.iter().filter_map(|name| serde_json::from_value(json!(name)).ok()).collect();
     let mut group_index = groups.iter().position(|candidate| *candidate == edit.line_group).unwrap_or_default();
-    let (cancel, apply, ok) = super::inset(ui, |ui| {
+    let (cancel, apply, ok) = {
         ui_kit::section_heading(ui, tr("ui.general"));
         for (label, value) in &general {
             ui_kit::value_row(ui, label, value);
@@ -395,7 +408,7 @@ pub(super) fn view_editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Optio
             (cancel, apply, ok)
         })
         .inner
-    });
+    };
     if cancel {
         return true;
     }
