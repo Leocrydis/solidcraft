@@ -1923,4 +1923,107 @@ mod tests {
             assert_eq!(h.app.preferences.drawing_sheet_dock, "top");
         }
     }
+
+    /// A 100 x 50 x 10 mm steel plate whose design has part number BRK-7, in Drawing, with a
+    /// drawing of one front base view at 1:1: its id. Steel at 7.85 g/cm³ makes 50 cm³ 392.5 g,
+    /// written 0.39 kg.
+    fn steel_plate_drawing(h: &mut Harness) -> u64 {
+        use serde_json::json;
+        h.app.home.open = false;
+        h.app.run("solid.box", json!({"length": 100, "width": 50, "height": 10, "body_name": "Plate"})).unwrap();
+        h.app.run("material.assign", json!({"bodies": ["Plate"], "material": "Steel"})).unwrap();
+        h.app.run("document.metadata.set", json!({"values": {"part_number": "BRK-7"}})).unwrap();
+        crate::workspace::enter(&mut h.app, "drawing").unwrap();
+        h.app.run("drawing.create", json!({})).unwrap();
+        let placed = h.app.run("drawing.view.base", json!({"sheet": "Sheet 1", "scale": "1:1", "position_mm": [150, 150]})).unwrap();
+        // The view drawn and the workspace still, so nothing closes a panel opened next.
+        h.settle();
+        solidcraft_engine::doc::ids::decode(placed["view"].as_str().unwrap()).unwrap()
+    }
+
+    /// A view's panel opens with General: its name, what kind of view it is, the way it looks, its
+    /// sheet, and the part it draws with that part's number, material and mass, read as the title
+    /// block reads them. Display says who gives each value: a new base view's visual style and
+    /// tangent edges are the defaults, its line group the drawing's.
+    #[test]
+    fn a_views_panel_shows_what_it_is_and_the_part_it_draws() {
+        let mut h = Harness::new();
+        let base = steel_plate_drawing(&mut h);
+        edit_object(&mut h.app, "view", base);
+        h.settle();
+        assert_eq!(inspector_title(&h.app), "Edit View");
+        let design = h.app.session.doc.name.clone();
+        for heading in ["General", "Display"] {
+            assert!(crate::scenario::rect_of(&format!("dialog:heading:{heading}")).is_some(), "the panel has {heading}");
+        }
+        for text in ["Front View", "Base View", "Front", "Sheet 1", &design, "BRK-7", "Steel", "0.39 kg"] {
+            assert!(h.widget(text).is_some(), "the panel shows {text}");
+        }
+        assert!(h.widget("Parent view").is_none(), "a base view has no parent");
+        assert_eq!(h.widgets("Default").len(), 2, "visual style and tangent edges");
+        assert!(h.widget("From the drawing").is_some(), "the line group");
+    }
+
+    /// Tangent edges and line group change from the panel: OK sends both in one `drawing.view.edit`,
+    /// one undo step; the view then sets both itself, and the panel opened again says so.
+    #[test]
+    fn a_views_panel_changes_its_tangent_edges_and_line_group_in_one_step() {
+        use serde_json::json;
+        use solidcraft_engine::doc::drawing::view::SetBy;
+        use solidcraft_engine::doc::drawing_view::TangentEdges;
+        use solidcraft_engine::geom::paper::line::LineGroup;
+
+        let mut h = Harness::new();
+        // Tall enough that the whole panel shows, its Display rows below General.
+        h.call("ui.resize", json!({"width": 1600, "height": 1800}));
+        let base = steel_plate_drawing(&mut h);
+        edit_object(&mut h.app, "view", base);
+        h.settle();
+        assert_eq!(inspector_title(&h.app), "Edit View");
+        let before = h.app.session.undo.len();
+        // The drawing's line group as the row shows it, and another to choose.
+        let drawn = h.app.session.drawing("drawing.inspect").unwrap().resolve_view(base).unwrap().line_group.value;
+        let shown = serde_json::to_value(drawn).unwrap().as_str().unwrap().to_string();
+        let (other, chosen) = if drawn == LineGroup::Mm0_7 { ("1", LineGroup::Mm1) } else { ("0.7", LineGroup::Mm0_7) };
+        // Each list is opened, and its choice picked, by the handles the kit gives them
+        // (`dialog:{row}` and `dialog:{row}:{choice}`): its row's label names both the list and the
+        // label's own text, so a search by text may find either.
+        let rows = [("Tangent edges", "Hide", "Show"), ("Line group", shown.as_str(), other)];
+        for (field, from, to) in rows {
+            assert!(h.widget(from).is_some(), "{field} shows {from}");
+            h.step(&json!({"click": {"handle": format!("dialog:{field}")}})).unwrap();
+            h.settle();
+            h.step(&json!({"click": {"handle": format!("dialog:{field}:{to}")}})).unwrap();
+            h.settle();
+        }
+        h.step(&json!({"widget": "OK"})).unwrap();
+        h.settle();
+        assert_eq!(h.app.session.undo.len(), before + 1, "one undo step");
+        let resolved = h.app.session.drawing("drawing.inspect").unwrap().resolve_view(base).unwrap();
+        assert_eq!((resolved.tangent_edges.value, resolved.tangent_edges.set_by), (TangentEdges::Show, SetBy::This));
+        assert_eq!((resolved.line_group.value, resolved.line_group.set_by), (chosen, SetBy::This));
+        edit_object(&mut h.app, "view", base);
+        h.settle();
+        assert_eq!(h.widgets("This view").len(), 2, "tangent edges and line group");
+    }
+
+    /// A projected view's panel names its parent and its side, and says its tangent edges follow
+    /// the parent view, which shows them.
+    #[test]
+    fn a_projected_views_panel_says_what_follows_its_parent() {
+        use serde_json::json;
+        use solidcraft_engine::doc::ids;
+
+        let mut h = Harness::new();
+        let base = steel_plate_drawing(&mut h);
+        h.app.run("drawing.view.edit", json!({"view": ids::encode(base), "set": {"tangent_edges": "show"}})).unwrap();
+        let placed = h.app.run("drawing.view.projected", json!({"parent": ids::encode(base), "side": "right"})).unwrap();
+        let right = ids::decode(placed["view"].as_str().unwrap()).unwrap();
+        h.settle();
+        edit_object(&mut h.app, "view", right);
+        h.settle();
+        for text in ["Projected View", "Parent view", "Front View", "Right", "Follows the parent view", "Show"] {
+            assert!(h.widget(text).is_some(), "the panel shows {text}");
+        }
+    }
 }

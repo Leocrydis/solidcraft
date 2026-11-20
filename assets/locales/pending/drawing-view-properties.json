@@ -1,0 +1,82 @@
+{
+  "ar": {
+    "ui.drawing_panel.line_group": "مجموعة الخطوط",
+    "ui.drawing_panel.mass": "الكتلة",
+    "ui.drawing_panel.material": "المادة",
+    "ui.drawing_panel.set_by_default": "افتراضي",
+    "ui.drawing_panel.set_by_drawing": "من اللوحة",
+    "ui.drawing_panel.set_by_parent": "يتبع المسقط الأصل",
+    "ui.drawing_panel.set_by_sheet": "من الورقة",
+    "ui.drawing_panel.set_by_this": "هذا المسقط"
+  },
+  "de": {
+    "ui.drawing_panel.line_group": "Liniengruppe",
+    "ui.drawing_panel.mass": "Masse",
+    "ui.drawing_panel.material": "Werkstoff",
+    "ui.drawing_panel.set_by_default": "Standard",
+    "ui.drawing_panel.set_by_drawing": "Von der Zeichnung",
+    "ui.drawing_panel.set_by_parent": "Folgt der übergeordneten Ansicht",
+    "ui.drawing_panel.set_by_sheet": "Vom Blatt",
+    "ui.drawing_panel.set_by_this": "Diese Ansicht"
+  },
+  "en": {
+    "ui.drawing_panel.line_group": "Line group",
+    "ui.drawing_panel.mass": "Mass",
+    "ui.drawing_panel.material": "Material",
+    "ui.drawing_panel.set_by_default": "Default",
+    "ui.drawing_panel.set_by_drawing": "From the drawing",
+    "ui.drawing_panel.set_by_parent": "Follows the parent view",
+    "ui.drawing_panel.set_by_sheet": "From the sheet",
+    "ui.drawing_panel.set_by_this": "This view"
+  },
+  "he": {
+    "ui.drawing_panel.line_group": "קבוצת קווים",
+    "ui.drawing_panel.mass": "מסה",
+    "ui.drawing_panel.material": "חומר",
+    "ui.drawing_panel.set_by_default": "ברירת מחדל",
+    "ui.drawing_panel.set_by_drawing": "מהשרטוט",
+    "ui.drawing_panel.set_by_parent": "עוקב אחר מבט האב",
+    "ui.drawing_panel.set_by_sheet": "מהגיליון",
+    "ui.drawing_panel.set_by_this": "מבט זה"
+  },
+  "ja": {
+    "ui.drawing_panel.line_group": "線幅グループ",
+    "ui.drawing_panel.mass": "質量",
+    "ui.drawing_panel.material": "材料",
+    "ui.drawing_panel.set_by_default": "既定",
+    "ui.drawing_panel.set_by_drawing": "図面から",
+    "ui.drawing_panel.set_by_parent": "親ビューに従う",
+    "ui.drawing_panel.set_by_sheet": "シートから",
+    "ui.drawing_panel.set_by_this": "このビュー"
+  },
+  "ko": {
+    "ui.drawing_panel.line_group": "선 그룹",
+    "ui.drawing_panel.mass": "질량",
+    "ui.drawing_panel.material": "재질",
+    "ui.drawing_panel.set_by_default": "기본값",
+    "ui.drawing_panel.set_by_drawing": "도면에서",
+    "ui.drawing_panel.set_by_parent": "상위 뷰를 따름",
+    "ui.drawing_panel.set_by_sheet": "시트에서",
+    "ui.drawing_panel.set_by_this": "이 뷰"
+  },
+  "vi": {
+    "ui.drawing_panel.line_group": "Nhóm nét",
+    "ui.drawing_panel.mass": "Khối lượng",
+    "ui.drawing_panel.material": "Vật liệu",
+    "ui.drawing_panel.set_by_default": "Mặc định",
+    "ui.drawing_panel.set_by_drawing": "Theo bản vẽ",
+    "ui.drawing_panel.set_by_parent": "Theo hình chiếu gốc",
+    "ui.drawing_panel.set_by_sheet": "Theo tờ",
+    "ui.drawing_panel.set_by_this": "Hình chiếu này"
+  },
+  "zh": {
+    "ui.drawing_panel.line_group": "线宽组",
+    "ui.drawing_panel.mass": "质量",
+    "ui.drawing_panel.material": "材料",
+    "ui.drawing_panel.set_by_default": "默认",
+    "ui.drawing_panel.set_by_drawing": "来自工程图",
+    "ui.drawing_panel.set_by_parent": "跟随父视图",
+    "ui.drawing_panel.set_by_sheet": "来自图纸",
+    "ui.drawing_panel.set_by_this": "此视图"
+  }
+}

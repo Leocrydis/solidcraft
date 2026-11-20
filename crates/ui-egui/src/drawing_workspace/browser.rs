@@ -251,8 +251,7 @@ fn view_name(app: &SolveApp, drawing: &Drawing, view: &View, number: usize) -> S
         return label.name.clone();
     }
     if matches!(view.kind, ViewKind::Base { .. } | ViewKind::Projected { .. })
-        && let Ok(resolved) = drawing.resolve_view(view.id)
-        && let Some(named) = NamedView::ALL.into_iter().find(|named| named.basis().normal() == resolved.basis.normal())
+        && let Some(named) = named_direction(drawing, view.id)
     {
         let key = match named {
             NamedView::Front => "cmd.view_front",
@@ -266,4 +265,11 @@ fn view_name(app: &SolveApp, drawing: &Drawing, view: &View, number: usize) -> S
         return app.tr(key).to_string();
     }
     solidcraft_ui_text::format("ui.drawing_browser_view", &[("number", &number.to_string())])
+}
+
+/// The named direction view `id` of `drawing` looks along (Front, Top, …, or an isometric one),
+/// when it looks along one.
+pub(super) fn named_direction(drawing: &Drawing, id: u64) -> Option<NamedView> {
+    let resolved = drawing.resolve_view(id).ok()?;
+    NamedView::ALL.into_iter().find(|named| named.basis().normal() == resolved.basis.normal())
 }

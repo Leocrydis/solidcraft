@@ -1,17 +1,23 @@
 use serde_json::{Value, json};
+use solidcraft_engine::doc::bom::Tree;
 use solidcraft_engine::doc::drawing::{
     Drawing, MAX_DPI, MAX_NAME_BYTES, MIN_DPI, Sheet,
     dimension::DimensionKind,
     table::{Kind, MassFormat, PartsList},
+    view::{SetBy, View, ViewKind},
 };
+use solidcraft_engine::doc::drawing_view::TangentEdges;
 use solidcraft_engine::doc::ids;
 use solidcraft_engine::geom::{
+    cell::{Content, Format, Part, Source},
     drawing_sheet::{DrawingBorderProfile, Orientation, PaperSize, Sheet as Paper, SheetSize},
-    drawing_view::Scale,
+    drawing_view::{NamedView, ProjectedSide, Scale},
+    paper::line::LineGroup,
     table::Heading,
     title_block::{self, TitleBlock},
 };
 use solidcraft_engine::render::VisualStyle;
+use solidcraft_engine::title_block_text;
 use solidcraft_theme::Tokens;
 use std::sync::LazyLock;
 
@@ -197,8 +203,107 @@ pub(super) struct ViewEdit {
     view: u64,
     scale: String,
     style: VisualStyle,
+    tangent: TangentEdges,
+    line_group: LineGroup,
+    /// What General shows of the part the view draws (model, part number, material, mass), and the
+    /// design revision it was read at: read once per revision, as weighing measures the bodies.
+    part: Option<(u64, [String; 4])>,
 }
 
+/// The component fields General reads of the part a view draws, in its rows' order.
+const PART_FIELDS: [&str; 4] = ["name", "part_number", "material", "mass"];
+
+/// What General shows when a field has no value.
+const NO_VALUE: &str = "\u{2014}";
+
+/// The part view `view` of the open drawing draws, as General shows it: each of [`PART_FIELDS`] read
+/// by the title block's rule ([`title_block_text::with_view_values`]), [`NO_VALUE`] where it has none.
+fn part_of(app: &SolveApp, view: u64) -> [String; 4] {
+    let session = &app.session;
+    let read = session.drawing("drawing.inspect").ok().and_then(|drawing| {
+        let contents = PART_FIELDS.map(|key| Content(vec![Part::Field { source: Source::Component, key: key.into(), format: Format::default() }]));
+        let state = session.model.state();
+        let mut tree = Tree::new(&session.doc, &state);
+        title_block_text::with_view_values(session, &mut tree, drawing, view, contents.iter(), |values| {
+            contents.each_ref().map(|content| values.text(content))
+        })
+    });
+    read.unwrap_or_default().map(|value| if value.is_empty() { NO_VALUE.to_string() } else { value })
+}
+
+/// Who gives a view's setting now, as a Display row's note says it.
+fn set_by(by: SetBy) -> &'static str {
+    tr(match by {
+        SetBy::This => "ui.drawing_panel.set_by_this",
+        SetBy::Parent(_) => "ui.drawing_panel.set_by_parent",
+        SetBy::Sheet => "ui.drawing_panel.set_by_sheet",
+        SetBy::Drawing => "ui.drawing_panel.set_by_drawing",
+        SetBy::Default => "ui.drawing_panel.set_by_default",
+    })
+}
+
+/// A view's kind as General names it: the label of the command that places one.
+fn kind_label(kind: &ViewKind) -> &'static str {
+    tr(match kind {
+        ViewKind::Base { .. } => "ui.drawing_panel.base",
+        ViewKind::Projected { .. } => "ui.drawing_panel.projected",
+        ViewKind::Section { .. } => "ui.section_view",
+        ViewKind::Pictorial { .. } => "cmd.drawing.view.pictorial",
+        ViewKind::Auxiliary { .. } => "cmd.drawing.view.auxiliary",
+        ViewKind::Flat { .. } => "cmd.drawing.view.flat_pattern",
+    })
+}
+
+/// What General shows of a view: each row's label and value, in order. Rows a view has no value
+/// for (a base view's parent, a section's named direction) are left out.
+fn general_rows(app: &SolveApp, drawing: &Drawing, view: &View, part: &[String; 4]) -> Vec<(&'static str, String)> {
+    let mut rows = Vec::new();
+    if let Some(name) = super::browser::name_of(app, view.id) {
+        rows.push((tr("ui.drawing_panel.name"), name));
+    }
+    rows.push((tr("ui.drawing_panel.type"), kind_label(&view.kind).to_string()));
+    let direction = match view.kind {
+        ViewKind::Projected { side, .. } => Some(tr(match side {
+            ProjectedSide::Left => "ui.drawing_panel.left",
+            ProjectedSide::Right => "ui.right",
+            ProjectedSide::Above => "ui.top",
+            ProjectedSide::Below => "ui.bottom",
+        })),
+        _ => super::browser::named_direction(drawing, view.id).map(|named| {
+            tr(match named {
+                NamedView::Front => "ui.front",
+                NamedView::Back => "ui.back",
+                NamedView::Top => "ui.top",
+                NamedView::Bottom => "ui.bottom",
+                NamedView::Left => "ui.drawing_panel.left",
+                NamedView::Right => "ui.right",
+                _ => "ui.drawing_panel.iso",
+            })
+        }),
+    };
+    if let Some(direction) = direction {
+        rows.push((tr("ui.drawing_panel.direction"), direction.to_string()));
+    }
+    if let Some(parent) = view.kind.parent().and_then(|parent| super::browser::name_of(app, parent)) {
+        rows.push((tr("ui.drawing_panel.parent"), parent));
+    }
+    if let Some(sheet) = drawing.sheets.iter().find(|sheet| sheet.id == view.sheet) {
+        rows.push((tr("ui.drawing_panel.sheet"), sheet.name.clone()));
+    }
+    let labels = ["ui.drawing_panel.model", "ui.design_properties.part_number", "ui.drawing_panel.material", "ui.drawing_panel.mass"];
+    rows.extend(labels.into_iter().map(tr).zip(part.iter().cloned()));
+    rows
+}
+
+/// A Display row's note: who gives the value it shows now.
+fn set_by_note(ui: &mut egui::Ui, by: SetBy) {
+    ui_kit::row(ui, "", |ui| ui_kit::text(ui, set_by(by), ui_kit::Text::Note("drawing:edit:set_by")));
+}
+
+/// A placed view's panel (Edit View, #13159 D23): General, what the view is and the part it draws,
+/// read only; Display, its visual style, tangent edges and line group, each with who gives it now
+/// (the view itself, its parent, its sheet, the drawing or the default); and its scale. Apply and
+/// OK send what changed through `drawing.view.edit`, in one undo step. Returns whether to close.
 pub(super) fn view_editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Option<u64>) -> bool {
     let sheet = active_sheet(app);
     let drawing = app.session.drawing("drawing.inspect").ok();
@@ -220,13 +325,29 @@ pub(super) fn view_editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Optio
             Some(id) => drawing.view(id).filter(|view| Some(view.sheet) == sheet),
             None => drawing.views.iter().find(|view| Some(view.sheet) == sheet).map(|view| view.as_ref()),
         }?;
-        drawing.resolve_view(view.id).ok().map(|settings| (view.id, settings.scale.value, settings.visual_style.value))
+        drawing.resolve_view(view.id).ok().map(|settings| (view.clone(), settings))
     });
-    let Some((view, scale, style)) = resolved else {
+    let Some((placed, settings)) = resolved else {
         return ui_kit::button(ui, tr("ui.cancel"), Button::Normal).clicked();
     };
-    let mut edit =
-        app.drawing_workspace.view_edit.take().filter(|edit| edit.view == view).unwrap_or_else(|| ViewEdit { view, scale: scale.to_string(), style });
+    let view = placed.id;
+    let (scale, style, tangent, line_group) =
+        (settings.scale.value, settings.visual_style.value, settings.tangent_edges.value, settings.line_group.value);
+    let mut edit = app.drawing_workspace.view_edit.take().filter(|edit| edit.view == view).unwrap_or_else(|| ViewEdit {
+        view,
+        scale: scale.to_string(),
+        style,
+        tangent,
+        line_group,
+        part: None,
+    });
+    let revision = app.session.revision;
+    let part = match edit.part.take() {
+        Some((read_at, part)) if read_at == revision => part,
+        _ => part_of(app, view),
+    };
+    let general = app.session.drawing("drawing.inspect").ok().map(|drawing| general_rows(app, drawing, &placed, &part)).unwrap_or_default();
+    edit.part = Some((revision, part));
     let styles = [VisualStyle::Visible, VisualStyle::VisibleHidden];
     let mut labels = vec![tr("ui.drawing_panel.visible"), tr("ui.drawing_panel.hidden")];
     let mut index = styles.iter().position(|candidate| *candidate == edit.style).unwrap_or(styles.len());
@@ -237,12 +358,32 @@ pub(super) fn view_editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Optio
             _ => "ui.drawing_panel.shaded_hidden",
         }));
     }
+    let tangents = [TangentEdges::Hide, TangentEdges::Show];
+    let mut tangent_index = tangents.iter().position(|candidate| *candidate == edit.tangent).unwrap_or_default();
+    let groups: Vec<LineGroup> = LineGroup::NAMES.iter().filter_map(|name| serde_json::from_value(json!(name)).ok()).collect();
+    let mut group_index = groups.iter().position(|candidate| *candidate == edit.line_group).unwrap_or_default();
     let (cancel, apply, ok) = super::inset(ui, |ui| {
+        ui_kit::section_heading(ui, tr("ui.general"));
+        for (label, value) in &general {
+            ui_kit::value_row(ui, label, value);
+        }
         ui_kit::section_heading(ui, tr("ui.drawing_panel.display"));
         ui_kit::choice_row(ui, tr("ui.drawing_panel.visual_style"), "drawing:edit:style", &mut index, &labels);
         if let Some(value) = styles.get(index) {
             edit.style = *value;
         }
+        set_by_note(ui, settings.visual_style.set_by);
+        let tangent_labels = [tr("ui.drawing_panel.hide"), tr("ui.drawing_panel.show")];
+        ui_kit::choice_row(ui, tr("ui.drawing_panel.tangent"), "drawing:edit:tangent", &mut tangent_index, &tangent_labels);
+        if let Some(value) = tangents.get(tangent_index) {
+            edit.tangent = *value;
+        }
+        set_by_note(ui, settings.tangent_edges.set_by);
+        ui_kit::choice_row(ui, tr("ui.drawing_panel.line_group"), "drawing:edit:line_group", &mut group_index, &LineGroup::NAMES);
+        if let Some(value) = groups.get(group_index) {
+            edit.line_group = *value;
+        }
+        set_by_note(ui, settings.line_group.set_by);
         ui_kit::section_heading(ui, tr("ui.scale"));
         ui_kit::text_row(ui, tr("ui.scale"), &mut edit.scale, "1:1");
         let valid = edit.scale.trim().parse::<Scale>().is_ok();
@@ -258,20 +399,26 @@ pub(super) fn view_editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Optio
     if cancel {
         return true;
     }
-    let mut settings = serde_json::Map::new();
+    let mut changes = serde_json::Map::new();
     if let Ok(value) = edit.scale.trim().parse::<Scale>()
         && value != scale
     {
-        settings.insert("scale".into(), json!(value));
+        changes.insert("scale".into(), json!(value));
     }
     if edit.style != style {
-        settings.insert("visual_style".into(), json!(edit.style));
+        changes.insert("visual_style".into(), json!(edit.style));
+    }
+    if edit.tangent != tangent {
+        changes.insert("tangent_edges".into(), json!(edit.tangent));
+    }
+    if edit.line_group != line_group {
+        changes.insert("line_group".into(), json!(edit.line_group));
     }
     app.drawing_workspace.view_edit = Some(edit);
-    if (!apply && !ok) || settings.is_empty() {
+    if (!apply && !ok) || changes.is_empty() {
         return ok;
     }
-    match app.run("drawing.view.edit", json!({"view": ids::encode(view), "set": settings})) {
+    match app.run("drawing.view.edit", json!({"view": ids::encode(view), "set": changes})) {
         Ok(_) => ok,
         Err(error) => {
             app.set_status(error, true);
