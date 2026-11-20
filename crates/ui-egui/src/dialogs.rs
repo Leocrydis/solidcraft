@@ -4397,27 +4397,28 @@ pub fn show(app: &mut SolveApp, ctx: &egui::Context) {
     // so the label column grows and the control column keeps its design width. Manager cards
     // keep their approved fixed width. Sheet Metal Rules keeps it too while the rule unfolds
     // from its K-factor, so no rule that exists changes its card; it widens only while a 90° row
-    // shows, whose "Bend Deduction at 90°" (#6794) needs the room in English too.
+    // shows, whose "Bend Deduction at 90°" (#6794) needs the room in English too. It stays a
+    // manager card either way: its header keeps the collapse arrow.
     let chart_rule = matches!(
         &d.kind,
         Kind::Sheet(crate::dialogs_sheet::Sm::Rules { unfold, .. })
             if crate::dialogs_sheet::UNFOLD_METHODS.get(*unfold).is_some_and(|method| *method != "k_factor")
     );
-    let manager = !chart_rule
-        && matches!(
-            d.kind,
-            Kind::Material { .. }
-                | Kind::Appearance(_)
-                | Kind::Motion(crate::dialogs_motion::Mo::Configurations { .. })
-                | Kind::Plastic(crate::dialogs_plastic::Pl::Rules { .. })
-                | Kind::Sheet(crate::dialogs_sheet::Sm::Rules { .. })
-        );
+    let manager = matches!(
+        d.kind,
+        Kind::Material { .. }
+            | Kind::Appearance(_)
+            | Kind::Motion(crate::dialogs_motion::Mo::Configurations { .. })
+            | Kind::Plastic(crate::dialogs_plastic::Pl::Rules { .. })
+            | Kind::Sheet(crate::dialogs_sheet::Sm::Rules { .. })
+    );
+    let fixed_width = manager && !chart_rule;
     let grow_key = egui::Id::unique(("sc_dialog_label_grow", raw_title));
     let label_grow = ctx.data(|data| data.get_temp::<f32>(grow_key)).unwrap_or(0.0).min((vp.width() - t.space_24 - card_width(&d)).max(0.0));
     let panel = crate::ui_kit::Panel::new(&heading, egui::Id::unique(("sc_dialog", title_of(&d))), anchor, drag_bounds, side, frame)
         .actions(ok_label, close_label);
     let max_width = (docked.x - drag_bounds.left()).max(crate::frame::DIALOG_MIN_W);
-    let panel = if manager {
+    let panel = if fixed_width {
         panel.width(card_width(&d).min(max_width))
     } else {
         panel.width((card_width(&d) + label_grow).min(max_width)).grow_label(grow_key)
