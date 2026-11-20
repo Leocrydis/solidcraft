@@ -17,8 +17,8 @@
 use solidcore_record::Vec2;
 use solidcraft_doc::Document;
 use solidcraft_doc::bom::{Mass, Tree};
-use solidcraft_doc::drawing::Drawing;
 use solidcraft_doc::drawing::fields::{Component, Documented, Values};
+use solidcraft_doc::drawing::{Drawing, SheetComponent};
 use solidcraft_geom::cell::{Content, HAlign, Part, Source, Warning, place_lines};
 use solidcraft_geom::paper::text::{Font, TextRun};
 use solidcraft_geom::title_block::{CellKind, TextCell, TitleBlock, TitleBlockLayout};
@@ -120,6 +120,67 @@ pub fn with_values<'c, R>(
     tree: &mut Tree<'_>,
     d: &Drawing,
     at: usize,
+    contents: impl Iterator<Item = &'c Content>,
+    answer: impl FnOnce(&Values) -> R,
+) -> R {
+    let documents = d.sheets.get(at).and_then(|sheet| sheet.documents).map_or(Reads::Nothing, Reads::Component);
+    with_component(s, tree, d, at, documents, contents, answer)
+}
+
+/// The component a sheet's or a view's fields read.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Reads {
+    /// None: the sheet documents none.
+    Nothing,
+    /// One the design no longer has: its fields are lost.
+    Gone,
+    Component(SheetComponent),
+}
+
+/// [`with_values`] for view `view` of `d`: its component fields read the component the view draws
+/// ([`view_component`]) instead of the one its sheet documents, by the same rule (a component since
+/// deleted, or of a design that can't be read, reads lost). What a view's panel shows of its part.
+/// None when `d` has no such view.
+pub fn with_view_values<'c, R>(
+    s: &Session,
+    tree: &mut Tree<'_>,
+    d: &Drawing,
+    view: u64,
+    contents: impl Iterator<Item = &'c Content>,
+    answer: impl FnOnce(&Values) -> R,
+) -> Option<R> {
+    let sheet = d.view(view)?.sheet;
+    let at = d.sheets.iter().position(|s| s.id == sheet)?;
+    Some(with_component(s, tree, d, at, view_component(s, d, view), contents, answer))
+}
+
+/// The component view `view` of `d` draws, as a sheet names the one it documents: the design its
+/// source names (component 0), or, when the view draws exactly one occurrence's subtree, that
+/// occurrence's component; gone when that occurrence is. Nothing when the view can't be resolved. A
+/// design that can't be read is named by its source alone, and reads lost as a sheet's does.
+fn view_component(s: &Session, d: &Drawing, view: u64) -> Reads {
+    let Ok(resolved) = d.resolve_view(view) else { return Reads::Nothing };
+    let source = resolved.source;
+    let one = match &resolved.occurrences.value {
+        Some(paths) if paths.len() == 1 => paths.first().and_then(|path| path.last()).copied(),
+        _ => None,
+    };
+    match (one, s.drawn(d, source)) {
+        (Some(occurrence), Ok(design)) => match design.doc.occurrences.iter().find(|o| o.id == occurrence) {
+            Some(o) => Reads::Component(SheetComponent { source, component: o.component }),
+            None => Reads::Gone,
+        },
+        _ => Reads::Component(SheetComponent { source, component: 0 }),
+    }
+}
+
+/// [`with_values`] with `documents` the component its fields read.
+fn with_component<'c, R>(
+    s: &Session,
+    tree: &mut Tree<'_>,
+    d: &Drawing,
+    at: usize,
+    documents: Reads,
     mut contents: impl Iterator<Item = &'c Content>,
     answer: impl FnOnce(&Values) -> R,
 ) -> R {
@@ -128,7 +189,11 @@ pub fn with_values<'c, R>(
     });
     // What the model says of the component it documents: a component since deleted, or of a design
     // that can't be read, has nothing.
-    let documents = d.sheets.get(at).and_then(|sheet| sheet.documents);
+    let documents = match documents {
+        Reads::Nothing => None,
+        Reads::Gone => return answer(&Values { drawing: d, sheet: at, component: Documented::Gone }),
+        Reads::Component(documents) => Some(documents),
+    };
     let design = documents.map(|documents| s.drawn(d, documents.source).ok());
     let id = documents.map(|documents| documents.component);
     let weighed = id.filter(|_| weighs && matches!(design, Some(Some(design)) if std::ptr::eq(design, s)));

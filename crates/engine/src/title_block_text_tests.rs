@@ -283,3 +283,42 @@ fn the_sheet_page_follows_the_drawings_fields() {
     assert_eq!(serde_json::to_string(&*after.scene).unwrap(), serde_json::to_string(&build(&s, &d, sheet).unwrap().scene).unwrap());
     find(&runs(&s, sheet), "Tangency Labs");
 }
+
+/// A view's fields read the part the view draws, by the title block's rule: the design for a view
+/// of the whole design (which has no part number), the occurrence's component once the view draws
+/// that one occurrence (its name and part number), and lost once that component is deleted, never
+/// the design's values in its place.
+#[test]
+fn a_views_fields_read_the_part_it_draws() {
+    use solidcraft_doc::drawing::fields::FieldState;
+    use solidcraft_doc::ids;
+    use solidcraft_geom::cell::Format;
+
+    let mut s = Session::default();
+    let made = run(&mut s, "component.create", json!({"name": "Bracket"}));
+    let (component, occurrence) = (made["component"].clone(), made["occurrence"].clone());
+    run(&mut s, "solid.box", json!({"length": 40, "width": 20, "height": 3, "body_name": "Plate"}));
+    run(&mut s, "component.activate", json!({"component": 0}));
+    run(&mut s, "component.metadata.set", json!({"component": "Bracket", "part_number": "BRK-7"}));
+    run(&mut s, "drawing.create", json!({}));
+    let placed = run(&mut s, "drawing.view.base", json!({"sheet": "Sheet 1", "scale": "1:1", "position_mm": [150, 150]}));
+    let view = ids::decode(placed["view"].as_str().unwrap()).unwrap();
+    let read = |s: &Session| {
+        let keys = ["name", "part_number"];
+        let contents: Vec<Content> =
+            keys.iter().map(|key| Content(vec![Part::Field { source: Source::Component, key: (*key).into(), format: Format::default() }])).collect();
+        let state = s.model.state();
+        let d = s.drawing("test").unwrap();
+        with_view_values(s, &mut Tree::new(&s.doc, &state), d, view, contents.iter(), |values| keys.map(|key| values.state(Source::Component, key)))
+            .unwrap()
+    };
+    let design = FieldState::Shown(s.doc.name.clone());
+    assert_eq!(read(&s), [design, FieldState::Empty], "the whole design");
+    run(&mut s, "drawing.view.edit", json!({"view": placed["view"], "set": {"source": {"occurrences": [[occurrence]]}}}));
+    assert_eq!(read(&s), [FieldState::Shown("Bracket".into()), FieldState::Shown("BRK-7".into())], "the one occurrence it draws");
+    let drawing = json!({"drawing": ids::encode(s.drawing("test").unwrap().id)});
+    run(&mut s, "drawing.close", json!({}));
+    run(&mut s, "component.delete", json!({"component": component}));
+    run(&mut s, "drawing.open", drawing);
+    assert_eq!(read(&s), [FieldState::Lost, FieldState::Lost], "its component deleted");
+}
