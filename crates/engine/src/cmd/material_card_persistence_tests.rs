@@ -86,6 +86,62 @@ fn omission_retains_null_clears_and_unrelated_material_edits_retain_cards() {
     assert_eq!(s.doc.user_materials[1].physical_card, original);
 }
 
+/// A material's description and elongation at break: set on create, kept when an edit leaves
+/// them out, cleared by null (or blank text), refused out of range without changing the design,
+/// reported by inspect, and saved with the design.
+#[test]
+fn description_and_elongation_are_set_kept_cleared_and_refused_atomically() {
+    let mut s = fixture();
+    let out = s
+        .execute(
+            "material.create",
+            &json!({"name":"Shop sheet","density_g_cm3":2.68,"description":"  5052-H32\nbends tight  ","elongation_percent":12}),
+        )
+        .unwrap();
+    assert_eq!(out["description"], "5052-H32\nbends tight", "trimmed at both ends");
+    assert_eq!(out["elongation_percent"], 12.0);
+    let inspected = s.execute("material.inspect", &json!({"material":"shop sheet"})).unwrap();
+    assert_eq!((inspected["description"].clone(), inspected["elongation_percent"].clone()), (out["description"].clone(), json!(12.0)));
+    // Left out: kept, through a rename and a density change.
+    s.execute("material.edit", &json!({"material":"Shop sheet","name":"Sheet","density_g_cm3":2.7})).unwrap();
+    let m = s.doc.user_material("Sheet").unwrap().clone();
+    assert_eq!((m.description.as_deref(), m.elongation_percent), (Some("5052-H32\nbends tight"), Some(12.0)));
+    // Saved and read back.
+    let reopened = Document::from_json(&s.doc.to_json()).unwrap();
+    assert_eq!(reopened.user_material("Sheet"), Some(&m));
+    // Out of range or the wrong type: refused, and nothing changes.
+    for bad in [
+        json!({"elongation_percent":0}),
+        json!({"elongation_percent":1000.5}),
+        json!({"elongation_percent":"12"}),
+        json!({"description":"x".repeat(2001)}),
+        json!({"description":"bell\u{7}"}),
+        json!({"description":12}),
+    ] {
+        let before = (s.doc.clone(), s.undo.len());
+        let mut p = bad.clone();
+        p["material"] = json!("Sheet");
+        assert!(s.execute("material.edit", &p).is_err(), "{bad}");
+        assert!(Arc::ptr_eq(&before.0, &s.doc) && before.1 == s.undo.len(), "{bad}");
+        let mut p = bad.clone();
+        p["name"] = json!("Refused");
+        p["density_g_cm3"] = json!(1.0);
+        assert!(s.execute("material.create", &p).is_err(), "{bad}");
+    }
+    // Null clears; blank text clears the description too; undo brings them back.
+    s.execute("material.edit", &json!({"material":"Sheet","description":null,"elongation_percent":null})).unwrap();
+    let cleared = s.doc.user_material("Sheet").unwrap().clone();
+    assert_eq!((cleared.description, cleared.elongation_percent), (None, None));
+    let saved: Value = serde_json::from_str(&s.doc.to_json()).unwrap();
+    let entry = saved["user_materials"].as_array().unwrap().iter().find(|m| m["name"] == "Sheet").unwrap().clone();
+    assert!(entry.get("description").is_none() && entry.get("elongation_percent").is_none(), "{entry}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc.user_material("Sheet"), Some(&m));
+    s.execute("material.edit", &json!({"material":"Sheet","description":"   "})).unwrap();
+    assert_eq!(s.doc.user_material("Sheet").unwrap().description, None);
+    assert_eq!(s.doc.user_material("Sheet").unwrap().elongation_percent, Some(12.0));
+}
+
 #[test]
 fn hostile_cards_refuse_atomically_and_saved_card_admission_is_not_bypassed() {
     let mut s = fixture();

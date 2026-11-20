@@ -102,6 +102,8 @@ impl LibraryMaterial {
             density: self.density_g_cm3,
             appearance: self.appearance.as_ref().map(LibraryLook::to_look),
             physical_card: self.physical_card.clone(),
+            description: None,
+            elongation_percent: None,
         }
     }
     fn validate(&self) -> Result<()> {

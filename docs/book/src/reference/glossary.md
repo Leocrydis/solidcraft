@@ -259,6 +259,21 @@ rectangular or round and need not follow the profile.
 - **Elsewhere:** end cap, end plate, cap plate.
 - **For translators:** a closing plate on a tube's end, not a cap of a sketch or surface.
 
+### elongation at break
+
+How far a test piece of a material stretches before it breaks, as a percentage of its starting
+length.
+
+A sheet metal shop reads it as how tightly the material bends without cracking. SolidCraft keeps it
+on a material the design defines, beside its density, not on the material's engineering card.
+
+- **In SolidCraft:** the `elongation_percent` parameter of `material.create` and `material.edit`, and
+  the design-file key of the same name on a user material.
+- **Don't use:** stretch, ductility (as the name of the value).
+- **Elsewhere:** elongation, elongation at break, percent elongation, A%.
+- **For translators:** a material property measured in a tensile test, not a modelling command
+  that stretches a body.
+
 ### equation curve
 
 A sketch curve whose shape comes from formulas over a range of one variable.

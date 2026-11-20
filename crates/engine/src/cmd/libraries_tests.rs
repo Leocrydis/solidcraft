@@ -455,6 +455,8 @@ fn physical_catalog_import_respects_design_cap_and_builtin_names_without_partial
             density: 1.0,
             appearance: None,
             physical_card: None,
+            description: None,
+            elongation_percent: None,
         });
     }
     let before = s.doc.clone();

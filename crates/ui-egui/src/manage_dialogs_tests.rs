@@ -350,6 +350,52 @@ fn material_table_figures_keep_four_significant_figures_and_unknown_is_a_dash() 
     assert_eq!(figure(Some(-1.5)), "-1.5");
 }
 
+/// The material editor takes a description and an elongation at break: Save stores them in one
+/// undo step, the saved view shows them, an edit that leaves them alone sends neither, a
+/// duplicate keeps them, and an out-of-range elongation cannot be saved.
+#[test]
+fn physical_material_editor_saves_a_description_and_elongation_at_break() {
+    let mut h = fixture();
+    h.app.session.selection.clear();
+    h.app.start("material.assign");
+    h.frames(3);
+    h.step(&json!({"click":{"handle":"material:new"}})).unwrap();
+    physical_type(&mut h, "name", "Shop sheet");
+    physical_type(&mut h, "density", "2.68");
+    physical_type(&mut h, "elongation", "0");
+    h.frames(2);
+    let doc = h.app.session.doc.clone();
+    let refused = physical_editor(&mut h).draft.as_ref().unwrap().command(&doc);
+    assert!(refused.is_err(), "0 % is out of range: {refused:?}");
+    physical_type(&mut h, "elongation", "12");
+    physical_type(&mut h, "description", "5052-H32, bends tight");
+    h.frames(2);
+    let history = h.app.session.undo.len();
+    h.step(&json!({"click":{"handle":"material:save"}})).unwrap();
+    h.frames(2);
+    assert_eq!(h.app.session.undo.len(), history + 1);
+    let saved = h.app.session.doc.user_material("Shop sheet").unwrap().clone();
+    assert_eq!((saved.description.as_deref(), saved.elongation_percent), (Some("5052-H32, bends tight"), Some(12.0)));
+    assert!(h.widget("5052-H32, bends tight").is_some(), "the saved view shows the description");
+    assert!(h.widget("Elongation at break: 12 %").is_some(), "and the elongation");
+    // An edit that changes neither sends neither; a duplicate keeps both.
+    let mut editor = crate::material_editor::Editor::default();
+    editor.begin(&h.app.session.doc, Some("Shop sheet"), false);
+    assert!(editor.draft.as_ref().unwrap().command(&h.app.session.doc).unwrap().is_none());
+    editor.begin(&h.app.session.doc, Some("Shop sheet"), true);
+    let (command, params) = editor.draft.as_ref().unwrap().command(&h.app.session.doc).unwrap().unwrap();
+    assert_eq!(command, "material.create");
+    assert_eq!((params["description"].clone(), params["elongation_percent"].clone()), (json!("5052-H32, bends tight"), json!(12.0)));
+    // Clearing both in the editor sends null for each.
+    editor.begin(&h.app.session.doc, Some("Shop sheet"), false);
+    let draft = editor.draft.as_mut().unwrap();
+    draft.description.clear();
+    draft.elongation.clear();
+    let (_, params) = draft.command(&h.app.session.doc).unwrap().unwrap();
+    assert_eq!((params["description"].clone(), params["elongation_percent"].clone()), (json!(null), json!(null)));
+    h.step(&json!({"click":{"handle":"dialog:cancel"}})).unwrap();
+}
+
 #[test]
 fn appearance_is_dense_and_preserves_color_opacity_and_targets() {
     form("appearance.assign", &["Objects", "Apply To", "Colour", "Opacity", "Library", "Search"]);

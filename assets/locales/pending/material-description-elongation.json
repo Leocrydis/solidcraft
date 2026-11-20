@@ -1,0 +1,50 @@
+{
+  "ar": {
+    "material.editor.description": "الوصف",
+    "material.editor.description_limit": "يجب ألا يزيد الوصف على 2000 حرف.",
+    "material.editor.elongation": "الاستطالة عند الكسر",
+    "material.editor.elongation_range": "يجب أن تكون الاستطالة عند الكسر أكبر من 0 وألا تزيد على 1000 %."
+  },
+  "de": {
+    "material.editor.description": "Beschreibung",
+    "material.editor.description_limit": "Die Beschreibung darf höchstens 2000 Zeichen lang sein.",
+    "material.editor.elongation": "Bruchdehnung",
+    "material.editor.elongation_range": "Die Bruchdehnung muss größer als 0 und höchstens 1000 % sein."
+  },
+  "en": {
+    "material.editor.description": "Description",
+    "material.editor.description_limit": "The description can have at most 2000 characters.",
+    "material.editor.elongation": "Elongation at break",
+    "material.editor.elongation_range": "Elongation at break must be above 0 and at most 1000 %."
+  },
+  "he": {
+    "material.editor.description": "תיאור",
+    "material.editor.description_limit": "התיאור יכול להכיל עד 2000 תווים.",
+    "material.editor.elongation": "התארכות בשבירה",
+    "material.editor.elongation_range": "ההתארכות בשבירה חייבת להיות גדולה מ-0 ולכל היותר 1000 %."
+  },
+  "ja": {
+    "material.editor.description": "説明",
+    "material.editor.description_limit": "説明は 2000 文字以内にしてください。",
+    "material.editor.elongation": "破断伸び",
+    "material.editor.elongation_range": "破断伸びは 0 より大きく 1000 % 以下にしてください。"
+  },
+  "ko": {
+    "material.editor.description": "설명",
+    "material.editor.description_limit": "설명은 최대 2000자까지 입력할 수 있습니다.",
+    "material.editor.elongation": "파단 연신율",
+    "material.editor.elongation_range": "파단 연신율은 0보다 크고 1000 % 이하여야 합니다."
+  },
+  "vi": {
+    "material.editor.description": "Mô tả",
+    "material.editor.description_limit": "Mô tả có tối đa 2000 ký tự.",
+    "material.editor.elongation": "Độ giãn dài khi đứt",
+    "material.editor.elongation_range": "Độ giãn dài khi đứt phải lớn hơn 0 và tối đa 1000 %."
+  },
+  "zh": {
+    "material.editor.description": "描述",
+    "material.editor.description_limit": "描述最多 2000 个字符。",
+    "material.editor.elongation": "断裂伸长率",
+    "material.editor.elongation_range": "断裂伸长率必须大于 0 且不超过 1000 %。"
+  }
+}

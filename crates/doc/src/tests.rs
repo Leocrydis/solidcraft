@@ -1084,6 +1084,44 @@ fn params_and_serialization() {
     assert!(doc.param("d1").is_none(), "unused model parameters are pruned");
 }
 
+/// A design material's description and elongation at break are saved and read back, left out of
+/// the file when the material has none, and a damaged file's values are refused.
+#[test]
+fn a_user_materials_description_and_elongation_round_trip_and_are_bounded() {
+    let mut doc = Document::new("materials");
+    let noted = UserMaterial {
+        name: "Shop sheet".into(),
+        density: 2.68,
+        appearance: None,
+        physical_card: None,
+        description: Some("5052-H32\nbends tight".into()),
+        elongation_percent: Some(12.0),
+    };
+    let plain =
+        UserMaterial { name: "Plain".into(), density: 1.0, appearance: None, physical_card: None, description: None, elongation_percent: None };
+    doc.user_materials = vec![noted, plain];
+    let text = doc.to_json();
+    assert_eq!(Document::from_json(&text).unwrap().user_materials, doc.user_materials);
+    let saved: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let left_out = &saved["user_materials"][1];
+    assert!(left_out.get("description").is_none() && left_out.get("elongation_percent").is_none(), "{left_out}");
+    for (field, bad) in [
+        ("description", serde_json::json!("")),
+        ("description", serde_json::json!("x".repeat(MAX_MATERIAL_DESCRIPTION + 1))),
+        ("description", serde_json::json!("bell\u{7}")),
+        ("description", serde_json::json!(3)),
+        ("elongation_percent", serde_json::json!(0)),
+        ("elongation_percent", serde_json::json!(MAX_ELONGATION_PERCENT + 0.5)),
+        ("elongation_percent", serde_json::json!("12")),
+    ] {
+        let mut damaged = saved.clone();
+        damaged["user_materials"][0][field] = bad.clone();
+        assert!(Document::from_json(&damaged.to_string()).is_err(), "{field}: {bad}");
+    }
+    assert!(valid_elongation_percent(MAX_ELONGATION_PERCENT) && !valid_elongation_percent(f64::NAN));
+    assert!(valid_material_description(&"x".repeat(MAX_MATERIAL_DESCRIPTION)) && valid_material_description("tab\tand\r\nbreak"));
+}
+
 /// #4783: a body reads the material its mass is computed with, as the library or the design
 /// spells it. An unknown name, or a design material with an unusable density, reads as the
 /// default material it weighs. `density` agrees in every case, and a configuration keeps the
@@ -1094,7 +1132,14 @@ fn a_body_reads_the_material_its_mass_is_computed_with() {
     let usable = [("Walnut", 0.65), ("Mote", f64::MIN_POSITIVE), ("Limit", MAX_DENSITY)];
     let unusable = [("Broken", -3.0), ("Weightless", 0.0), ("Beyond", MAX_DENSITY.next_up())];
     for (name, density) in usable.into_iter().chain(unusable) {
-        doc.user_materials.push(UserMaterial { name: name.into(), density, appearance: None, physical_card: None });
+        doc.user_materials.push(UserMaterial {
+            name: name.into(),
+            density,
+            appearance: None,
+            physical_card: None,
+            description: None,
+            elongation_percent: None,
+        });
     }
     // (body, its assignment as stored, the material it reads and weighs, that material's density)
     let cases = [

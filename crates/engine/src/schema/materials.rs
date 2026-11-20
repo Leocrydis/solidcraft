@@ -149,6 +149,20 @@ fn card_schema(generator: &mut SchemaGenerator) -> Schema {
     })
 }
 
+fn description_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({
+        "description": "A free-text note about the material: at most 2000 characters, line breaks allowed. `null` or blank text: none (an edit clears it). Left out: none for a new material; an edit keeps the current one.",
+        "anyOf": [{"type": "string", "maxLength": 2000}, {"type": "null"}]
+    })
+}
+
+fn elongation_schema(_: &mut SchemaGenerator) -> Schema {
+    json_schema!({
+        "description": "Elongation at break in percent: above 0 and at most 1000. `null`: none (an edit clears it). Left out: none for a new material; an edit keeps the current one.",
+        "anyOf": [{"type": "number", "exclusiveMinimum": 0, "maximum": 1000}, {"type": "null"}]
+    })
+}
+
 /// Define a physical material in this design: a name, a density and an optional default look
 /// and physical card. Assign it with `material.assign`. One undo step.
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -174,6 +188,12 @@ pub struct MaterialCreateParams {
     #[serde(default, deserialize_with = "card_or_clear")]
     #[schemars(schema_with = "card_schema")]
     pub physical_card: Option<Value>,
+    #[serde(default, deserialize_with = "card_or_clear")]
+    #[schemars(schema_with = "description_schema")]
+    pub description: Option<Value>,
+    #[serde(default, deserialize_with = "card_or_clear")]
+    #[schemars(schema_with = "elongation_schema")]
+    pub elongation_percent: Option<Value>,
 }
 
 /// Change a physical material this design defines: its name (its bodies and configuration cells
@@ -207,6 +227,12 @@ pub struct MaterialEditParams {
     #[serde(default, deserialize_with = "card_or_clear")]
     #[schemars(schema_with = "card_schema")]
     pub physical_card: Option<Value>,
+    #[serde(default, deserialize_with = "card_or_clear")]
+    #[schemars(schema_with = "description_schema")]
+    pub description: Option<Value>,
+    #[serde(default, deserialize_with = "card_or_clear")]
+    #[schemars(schema_with = "elongation_schema")]
+    pub elongation_percent: Option<Value>,
 }
 
 /// Read a material, built-in or this design's: its density, default look and physical card,
@@ -240,6 +266,12 @@ pub struct MaterialReply {
     pub appearance: Option<LookReply>,
     /// Always true: a material this design defines.
     pub user: bool,
+    /// Its description, when it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Its elongation at break (%), when it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elongation_percent: Option<f64>,
     /// Its physical card, when it has one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub physical_card: Option<Value>,
@@ -268,6 +300,12 @@ pub struct MaterialInspected {
     pub appearance: Option<LookReply>,
     /// Whether this design defines it (`false`: a built-in material).
     pub user: bool,
+    /// Its description, when it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Its elongation at break (%), when it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elongation_percent: Option<f64>,
     /// Its physical card; `null` when it has none.
     pub physical_card: Option<Value>,
     /// The card's check, when it has a card.

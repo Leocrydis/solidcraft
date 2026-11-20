@@ -132,6 +132,14 @@ fn numbers(ui: &mut egui::Ui, field: &str, values: &[f64], unit: &str) {
 /// Reading properties never changes the assigned density or the candidate reviewer.
 pub(crate) fn show_saved_material(ui: &mut egui::Ui, doc: &solidcraft_engine::doc::Document, name: &str) {
     value(ui, tr("Density"), doc.material_density(name).map(|density| density.to_string()), "g/cm³");
+    if let Some(material) = doc.user_material(name) {
+        if let Some(text) = &material.description {
+            ui_kit::text(ui, text, ui_kit::Text::Note("material_description"));
+        }
+        if let Some(percent) = material.elongation_percent {
+            value(ui, tr("material.editor.elongation"), Some(percent.to_string()), "%");
+        }
+    }
     let Some(record) = doc.user_material(name).and_then(|material| material.physical_card.as_ref()) else {
         value(ui, tr("ui.material_review.properties"), None, "");
         return;

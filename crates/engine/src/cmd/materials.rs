@@ -32,7 +32,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&CREATE_CONTRACT)
         .output(output_schema_for::<MaterialReply>)
         .params(
-        "name (not a built-in material's); density_g_cm3: (0, 1000]; appearance?: library name (appearance.library) | color?: \"#rrggbb\" or [r, g, b] (0–255), opacity? (0–1), pbr?: {metallic:0..1, roughness:0.045..1, dielectric_ior:1..3} (opaque only, needs color/appearance): the default look. A named appearance keeps its preset response when pbr is omitted; pbr: null selects scalar shading. Optical edits do not change density. physical_card?: validated SI candidate record (null/omitted means unknown); card density never changes assigned density. Assign it with material.assign",
+        "name (not a built-in material's); density_g_cm3: (0, 1000]; appearance?: library name (appearance.library) | color?: \"#rrggbb\" or [r, g, b] (0–255), opacity? (0–1), pbr?: {metallic:0..1, roughness:0.045..1, dielectric_ior:1..3} (opaque only, needs color/appearance): the default look. A named appearance keeps its preset response when pbr is omitted; pbr: null selects scalar shading. Optical edits do not change density. physical_card?: validated SI candidate record (null/omitted means unknown); card density never changes assigned density. description?: text, at most 2000 characters. elongation_percent?: elongation at break, (0, 1000]. Assign it with material.assign",
     ),
     CommandSpec::new("material.edit", "Edit Physical Material", crate::checked!("material.edit", edit))
         .icon("material")
@@ -40,7 +40,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&EDIT_CONTRACT)
         .output(output_schema_for::<MaterialReply>)
         .params(
-        "material: a material defined in this design; name? (bodies and configuration cells follow); density_g_cm3?; appearance? | color?, opacity?, pbr? (as material.create; color: null clears the look). physical_card?: validated SI candidate record (omitted retains, null clears). Omitted appearance/color retains the entire current look",
+        "material: a material defined in this design; name? (bodies and configuration cells follow); density_g_cm3?; appearance? | color?, opacity?, pbr? (as material.create; color: null clears the look). physical_card?: validated SI candidate record (omitted retains, null clears). description?, elongation_percent? (as material.create; omitted retains, null clears). Omitted appearance/color retains the entire current look",
     ),
     CommandSpec::new("material.inspect", "Inspect Physical Material", crate::checked!("material.inspect", inspect))
         .icon("material")
@@ -130,6 +130,8 @@ fn material_reply(cmd: &str, m: &UserMaterial) -> Result<MaterialReply> {
         density_g_cm3: m.density,
         appearance: m.appearance.as_ref().map(LookReply::from),
         user: true,
+        description: m.description.clone(),
+        elongation_percent: m.elongation_percent,
         physical_card: None,
         physical_validation: None,
         density_comparison: None,
@@ -178,6 +180,33 @@ fn physical_card(cmd: &str, p: &Value) -> Result<Option<Option<solidcraft_doc::p
     }
 }
 
+/// `description`: `None` when not given, `Some(None)` to clear it (`null` or blank text).
+fn description(cmd: &str, p: &Value) -> Result<Option<Option<String>>> {
+    match p.get("description") {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(Value::String(text)) if text.trim().is_empty() => Ok(Some(None)),
+        Some(Value::String(text)) if solidcraft_doc::valid_material_description(text.trim()) => Ok(Some(Some(text.trim().to_string()))),
+        Some(_) => Err(bad(
+            cmd,
+            format!("`description` must be text of at most {} characters, without control characters", solidcraft_doc::MAX_MATERIAL_DESCRIPTION),
+        )),
+    }
+}
+
+/// `elongation_percent`: `None` when not given, `Some(None)` to clear it (`null`).
+fn elongation(cmd: &str, p: &Value) -> Result<Option<Option<f64>>> {
+    match p.get("elongation_percent") {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(value) => {
+            value.as_f64().filter(|percent| solidcraft_doc::valid_elongation_percent(*percent)).map(|percent| Some(Some(percent))).ok_or_else(|| {
+                bad(cmd, format!("`elongation_percent` must be a number above 0 and at most {}", solidcraft_doc::MAX_ELONGATION_PERCENT))
+            })
+        }
+    }
+}
+
 fn inspect(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "material.inspect";
     let name = str_(p, "material").ok_or_else(|| bad(cmd, "`material` must be a material name"))?;
@@ -191,6 +220,8 @@ fn inspect(s: &mut Session, p: &Value) -> Result<Value> {
             density_g_cm3: own.density_g_cm3,
             appearance,
             user: true,
+            description: own.description,
+            elongation_percent: own.elongation_percent,
             physical_card: own.physical_card,
             physical_validation: own.physical_validation,
             density_comparison: own.density_comparison,
@@ -207,6 +238,8 @@ fn inspect(s: &mut Session, p: &Value) -> Result<Value> {
             density_g_cm3: density,
             appearance,
             user: false,
+            description: None,
+            elongation_percent: None,
             physical_card: None,
             physical_validation: None,
             density_comparison: None,
@@ -232,8 +265,14 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
     if s.doc.user_materials.len() >= MAX_USER_MATERIALS {
         return Err(bad(cmd, format!("a design defines at most {MAX_USER_MATERIALS} materials")));
     }
-    let material =
-        UserMaterial { density: density(cmd, p)?, appearance: look(cmd, p, &name)?.flatten(), name, physical_card: physical_card(cmd, p)?.flatten() };
+    let material = UserMaterial {
+        density: density(cmd, p)?,
+        appearance: look(cmd, p, &name)?.flatten(),
+        name,
+        physical_card: physical_card(cmd, p)?.flatten(),
+        description: description(cmd, p)?.flatten(),
+        elongation_percent: elongation(cmd, p)?.flatten(),
+    };
     let out = reply(cmd, material_reply(cmd, &material)?)?;
     s.doc_mut().user_materials.push(material);
     Ok(out)
@@ -301,7 +340,9 @@ fn edit(s: &mut Session, p: &Value) -> Result<Value> {
         }),
     };
     let physical_card = physical_card(cmd, p)?.unwrap_or(old.physical_card);
-    let material = UserMaterial { name: name.clone(), density, appearance, physical_card };
+    let description = description(cmd, p)?.unwrap_or(old.description);
+    let elongation_percent = elongation(cmd, p)?.unwrap_or(old.elongation_percent);
+    let material = UserMaterial { name: name.clone(), density, appearance, physical_card, description, elongation_percent };
     let mut out = material_reply(cmd, &material)?;
     if let Some(m) = s.doc_mut().user_materials.get_mut(i) {
         *m = material;

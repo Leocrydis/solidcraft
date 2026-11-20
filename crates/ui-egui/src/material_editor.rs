@@ -117,6 +117,10 @@ pub(crate) struct Draft {
     copied_appearance: Option<Look>,
     pub(crate) name: String,
     pub(crate) density: String,
+    /// The material's description, as typed (blank: none).
+    pub(crate) description: String,
+    /// Elongation at break (%), as typed (blank: none).
+    pub(crate) elongation: String,
     pub(crate) card_enabled: bool,
     pub(crate) card: CardDraft,
 }
@@ -135,6 +139,9 @@ impl Draft {
             original,
             copied_appearance: source.and_then(|name| doc.material_look(name)),
             density: source.and_then(|name| doc.material_density(name)).map(|n| n.to_string()).unwrap_or_default(),
+            // A duplicate keeps them, as it keeps the look.
+            description: user.as_ref().and_then(|m| m.description.clone()).unwrap_or_default(),
+            elongation: user.as_ref().and_then(|m| m.elongation_percent).map(|n| n.to_string()).unwrap_or_default(),
             card_enabled: saved.is_some(),
             card: saved.map(CardDraft::from_card).unwrap_or_else(|| CardDraft::empty(&name)),
             name,
@@ -151,6 +158,17 @@ impl Draft {
         if !solidcraft_engine::doc::valid_density(density) {
             return Err(tr("material.editor.density_range").to_string());
         }
+        let description = Some(self.description.trim()).filter(|text| !text.is_empty());
+        if description.is_some_and(|text| !solidcraft_engine::doc::valid_material_description(text)) {
+            return Err(tr("material.editor.description_limit").to_string());
+        }
+        let elongation = match self.elongation.trim() {
+            "" => None,
+            text => Some(number(text, "elongation_percent")?)
+                .filter(|n| solidcraft_engine::doc::valid_elongation_percent(*n))
+                .map(Some)
+                .ok_or_else(|| tr("material.editor.elongation_range").to_string())?,
+        };
         let card = if self.card_enabled { Some(self.card.build()?) } else { None };
         if let Some(original) = &self.original {
             if doc.user_material(&original.name) != Some(original) {
@@ -166,6 +184,12 @@ impl Draft {
             if card.as_ref() != original.physical_card.as_ref().map(|c| c.card()) {
                 params["physical_card"] = json!(card);
             }
+            if description != original.description.as_deref() {
+                params["description"] = json!(description);
+            }
+            if elongation != original.elongation_percent {
+                params["elongation_percent"] = json!(elongation);
+            }
             if params.as_object().is_some_and(|p| p.len() == 1) {
                 return Ok(None);
             }
@@ -174,6 +198,12 @@ impl Draft {
             let mut params = json!({"name":name,"density_g_cm3":density});
             if let Some(card) = card {
                 params["physical_card"] = json!(card);
+            }
+            if let Some(text) = description {
+                params["description"] = json!(text);
+            }
+            if let Some(percent) = elongation {
+                params["elongation_percent"] = json!(percent);
             }
             if let Some(look) = &self.copied_appearance {
                 // Duplicate optical values without retaining a live library link.
@@ -528,6 +558,8 @@ pub(crate) fn rows(app: &mut SolveApp, ui: &mut egui::Ui, index: &mut usize, edi
         ui_kit::text(ui, tr("material.editor.scope"), ui_kit::Text::Hint("physical_edit"));
         field(ui, tr("Name"), "name", &mut draft.name, "");
         field(ui, tr("material.editor.assigned_density"), "density", &mut draft.density, "g/cm³");
+        field(ui, tr("material.editor.description"), "description", &mut draft.description, "");
+        field(ui, tr("material.editor.elongation"), "elongation", &mut draft.elongation, "%");
         if let Some(look) = &draft.copied_appearance {
             ui_kit::text(ui, &format!("{}: {}", tr("material.editor.preserved_appearance"), look.name), ui_kit::Text::Note("physical_appearance"));
         }
@@ -711,7 +743,10 @@ fn materials_table(app: &mut SolveApp, ui: &mut egui::Ui, index: &mut usize, edi
             table.headers(ui, |_, _| false);
             for row in &rows {
                 let selected = names.get(*index).is_some_and(|name| name == &row.name);
-                let tip = tr(if row.own { "material.manager.design_row" } else { "material.manager.builtin_row" });
+                let description = app.session.doc.user_material(&row.name).and_then(|m| m.description.clone());
+                let tip = description
+                    .unwrap_or_else(|| tr(if row.own { "material.manager.design_row" } else { "material.manager.builtin_row" }).to_string());
+                let tip = tip.as_str();
                 // A cell's text takes its own clicks, so a click anywhere on the row counts.
                 let mut clicked = false;
                 let response = table.row(ui, &row.name, selected, |cells| {

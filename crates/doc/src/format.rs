@@ -1243,7 +1243,21 @@ fn check_design_numbers(v: &Value) -> Result<()> {
             for (field, data) in fields {
                 // SI engineering constants have separate typed bounds. No other field,
                 // including nested fields with this name, bypasses coordinate limits.
-                if field == "physical_card" && !data.is_null() {
+                if field == "description" && !data.is_null() {
+                    if !data.as_str().is_some_and(crate::valid_material_description) {
+                        return Err(DocError::Invalid(format!(
+                            "a user material's description must be text of at most {} characters",
+                            crate::MAX_MATERIAL_DESCRIPTION
+                        )));
+                    }
+                } else if field == "elongation_percent" && !data.is_null() {
+                    if !data.as_f64().is_some_and(crate::valid_elongation_percent) {
+                        return Err(DocError::Invalid(format!(
+                            "a user material's elongation_percent must be above 0 and at most {}",
+                            crate::MAX_ELONGATION_PERCENT
+                        )));
+                    }
+                } else if field == "physical_card" && !data.is_null() {
                     crate::physical_material::validate_card(data)?;
                 } else {
                     check_numbers(data, "design", 3)?;

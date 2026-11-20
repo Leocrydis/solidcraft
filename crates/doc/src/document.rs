@@ -5624,6 +5624,36 @@ pub struct UserMaterial {
     /// Candidate engineering data; independent of assigned mass density and optics.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub physical_card: Option<crate::physical_material::ValidatedCard>,
+    /// A free-text note about the material, for the people who use it (see
+    /// [`valid_material_description`]). Kept outside the card, so an older build that reads a
+    /// card strictly still reads the material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Elongation at break in percent (see [`valid_elongation_percent`]): how far the material
+    /// stretches before it breaks, which tells how tightly it bends. Kept outside the card, as
+    /// `description` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elongation_percent: Option<f64>,
+}
+
+/// Longest material description, in characters.
+pub const MAX_MATERIAL_DESCRIPTION: usize = 2000;
+
+/// Largest elongation at break (%): 1000 % covers elastomers.
+pub const MAX_ELONGATION_PERCENT: f64 = 1000.0;
+
+/// A description a material can have: not blank, at most [`MAX_MATERIAL_DESCRIPTION`]
+/// characters, and no control characters other than line breaks and tabs.
+pub fn valid_material_description(text: &str) -> bool {
+    !text.trim().is_empty()
+        && text.chars().count() <= MAX_MATERIAL_DESCRIPTION
+        && text.chars().all(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t'))
+}
+
+/// An elongation at break a material can have: finite, above 0 and at most
+/// [`MAX_ELONGATION_PERCENT`] %.
+pub fn valid_elongation_percent(percent: f64) -> bool {
+    percent.is_finite() && percent > 0.0 && percent <= MAX_ELONGATION_PERCENT
 }
 
 /// Bound design-owned definitions consistently in commands and normal file loading.
