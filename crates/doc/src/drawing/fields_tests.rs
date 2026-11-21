@@ -302,3 +302,55 @@ fn a_field_its_source_lacks_reads_unknown() {
     assert_eq!(unknown_field(&parts).as_deref(), Some("the component has no field `weight`"), "the first one");
     assert_eq!(unknown_field(&Content(vec![field(Source::Sheet, "scale")])), None);
 }
+
+/// Every field a note may hold has one short name, and that name reads back as the field; names
+/// that aren't one read nothing. A parameter keeps its name's case.
+#[test]
+fn each_field_has_one_short_name_that_reads_back_as_it() {
+    use crate::drawing::short_form::{FIXED, field_of, short_name};
+    let mut names = BTreeSet::new();
+    for fixed in FIXED {
+        assert!(has_key(fixed.source, fixed.key), "{} names a field its source has", fixed.short);
+        assert_eq!(short_name(fixed.source, fixed.key).as_deref(), Some(fixed.short));
+        assert_eq!(field_of(fixed.short), Some((fixed.source, fixed.key.to_string())));
+        assert!(names.insert(fixed.short), "{} is used once", fixed.short);
+    }
+    for (source, key, short) in [
+        (Source::Parameter, "Length", "p.Length"),
+        (Source::Component, "properties.finish", "part.finish"),
+        (Source::Drawing, "properties.customer", "dwg.customer"),
+        (Source::Prompt, "checked_by", "ask.checked_by"),
+    ] {
+        assert_eq!(short_name(source, key).as_deref(), Some(short));
+        assert_eq!(field_of(short), Some((source, key.to_string())));
+    }
+    assert_eq!(short_name(Source::Row, "quantity"), None, "a parts list's row field has none");
+    for name in ["", "p.", "part.", "nope", "Mat", "dwg."] {
+        assert_eq!(field_of(name), None, "`{name}` names no field");
+    }
+}
+
+/// A note's content goes to its editor's text and back unchanged: text with its braces doubled,
+/// each field as its short name in braces. Typed text reads its short names as fields; an unknown
+/// name, a brace left open or a lone `}` is refused, naming it.
+#[test]
+fn a_notes_content_goes_to_text_and_back_unchanged() {
+    use crate::drawing::short_form::{from_text, to_text};
+    let content = Content(vec![
+        Part::Text("2X Ø6 THRU {typ} IN ".into()),
+        field(Source::Component, "material"),
+        Part::Text(", L = ".into()),
+        field(Source::Parameter, "Length"),
+        field(Source::Sheet, "scale"),
+    ]);
+    let text = to_text(&content);
+    assert_eq!(text, "2X Ø6 THRU {{typ}} IN {mat}, L = {p.Length}{scale}");
+    assert_eq!(from_text(&text).unwrap(), content);
+    assert_eq!(from_text("Deburr all edges").unwrap(), Content(vec![Part::Text("Deburr all edges".into())]));
+    assert_eq!(from_text("{ pn }").unwrap(), Content(vec![field(Source::Component, "part_number")]), "spaces inside the braces");
+    assert_eq!(from_text("").unwrap(), Content(Vec::new()));
+    for (typed, why) in [("Rev {nope}", "`{nope}` is not a field"), ("L = {p.Length", "has no closing"), ("a } b", "no opening")] {
+        let e = from_text(typed).unwrap_err();
+        assert!(e.contains(why), "{typed}: {e}");
+    }
+}

@@ -1,0 +1,26 @@
+{
+  "ar": {
+    "ui.drawing_note.unreadable": "تعذّرت قراءة نص الملاحظة: {why}"
+  },
+  "de": {
+    "ui.drawing_note.unreadable": "Der Text der Notiz ist nicht lesbar: {why}"
+  },
+  "en": {
+    "ui.drawing_note.unreadable": "The note's text can't be read: {why}"
+  },
+  "he": {
+    "ui.drawing_note.unreadable": "לא ניתן לקרוא את טקסט ההערה: {why}"
+  },
+  "ja": {
+    "ui.drawing_note.unreadable": "注記のテキストを読み取れません: {why}"
+  },
+  "ko": {
+    "ui.drawing_note.unreadable": "주석 텍스트를 읽을 수 없습니다: {why}"
+  },
+  "vi": {
+    "ui.drawing_note.unreadable": "Không đọc được văn bản của ghi chú: {why}"
+  },
+  "zh": {
+    "ui.drawing_note.unreadable": "无法读取注释文本：{why}"
+  }
+}

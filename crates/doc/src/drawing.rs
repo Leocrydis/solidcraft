@@ -78,6 +78,7 @@ pub mod fold;
 pub mod image;
 pub mod note;
 pub mod sheet_set;
+pub mod short_form;
 mod sketch;
 pub mod symbol;
 pub mod table;

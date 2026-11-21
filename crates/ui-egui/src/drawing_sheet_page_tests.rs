@@ -39,6 +39,49 @@ fn note_tool_places_text_on_the_active_sheet() {
     assert_eq!(note.content.0, vec![solidcraft_engine::geom::cell::Part::Text("Deburr all edges".to_owned())]);
 }
 
+/// A note that holds fields opens in the Note panel with each field as its short name in braces,
+/// and OK saves the text around them with the fields still fields. A short name that names no field
+/// says so under the box and keeps OK from saving.
+#[test]
+fn a_note_with_fields_opens_and_saves_with_its_fields() {
+    use solidcraft_engine::doc::drawing::short_form;
+    use solidcraft_engine::geom::cell::{Part, Source};
+    let (mut h, _) = plate_sheet();
+    h.app.run("parameters.change", json!({"name": "Length", "expression": "100 mm"})).unwrap();
+    let field = |source: &str, key: &str| json!({"field": {"source": source, "key": key}});
+    let content = json!([{"text": "L "}, field("parameter", "Length"), {"text": " ON "}, field("sheet", "name")]);
+    let note = h.app.run("drawing.note.add", json!({"anchor": {"sheet": "Sheet 1"}, "at": [300, 230], "content": content})).unwrap();
+    let note = solidcraft_engine::doc::ids::decode(note["note"].as_str().unwrap()).unwrap();
+    settle(&mut h);
+    crate::drawing_workspace::edit(&mut h.app, note, egui::Pos2::ZERO);
+    h.frames(4);
+    assert!(h.widget("L {p.Length} ON {sheet}").is_some(), "the fields show as their short names");
+    let text = crate::scenario::rect_of("drawing:note:text").unwrap().center();
+    h.step(&json!({"click": [text.x, text.y]})).unwrap();
+    h.step(&json!({"key": "A", "cmd": true})).unwrap();
+    h.step(&json!({"text": "Rev {nope}"})).unwrap();
+    h.frames(2);
+    let why = short_form::from_text("Rev {nope}").unwrap_err();
+    let warning = solidcraft_ui_text::format("ui.drawing_note.unreadable", &[("why", &why)]);
+    assert!(crate::scenario::rect_of(&format!("dialog:status:{warning}")).is_some(), "the box says which name is not a field");
+    let undo = h.app.session.undo.len();
+    h.step(&json!({"widget": "OK"})).unwrap();
+    h.frames(2);
+    assert_eq!(h.app.session.undo.len(), undo, "OK saves nothing while a name is not a field");
+    h.step(&json!({"click": [text.x, text.y]})).unwrap();
+    h.step(&json!({"key": "A", "cmd": true})).unwrap();
+    h.step(&json!({"text": "LENGTH {p.Length} / {sheet}"})).unwrap();
+    h.frames(2);
+    h.step(&json!({"widget": "OK"})).unwrap();
+    h.frames(2);
+    let drawing = h.app.session.drawing("drawing.inspect").unwrap();
+    let saved = &drawing.notes.by_id(note).unwrap().content;
+    let field = |source, key: &str| Part::Field { source, key: key.into(), format: Default::default() };
+    let want = vec![Part::Text("LENGTH ".into()), field(Source::Parameter, "Length"), Part::Text(" / ".into()), field(Source::Sheet, "name")];
+    assert_eq!(saved.0, want);
+    assert_eq!(h.app.session.undo.len(), undo + 1, "one undo step");
+}
+
 /// A right-click on the sheet opens the menu a sketch's right-click opens: it selects what is under
 /// the pointer first, offers Edit and Delete for it, then the tools, then Undo and Redo. On empty
 /// paper the selection stays, and a right-click with a tool in hand puts the tool down.
