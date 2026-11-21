@@ -283,3 +283,25 @@ fn the_sheet_page_follows_the_drawings_fields() {
     assert_eq!(serde_json::to_string(&*after.scene).unwrap(), serde_json::to_string(&build(&s, &d, sheet).unwrap().scene).unwrap());
     find(&runs(&s, sheet), "Tangency Labs");
 }
+
+/// A list of fields offers the design's user parameters and its favourites, not the model's own
+/// (`d1`, `d2`…, its features' named inputs) unless they are favourites; with `all`, every one. A
+/// note's preview reads a parameter field as the sheet will.
+#[test]
+fn a_field_list_offers_user_parameters_and_favourites_and_a_preview_reads_them() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.change", json!({"name": "Length", "expression": "50 mm"}));
+    run(&mut s, "solid.box", json!({"length": 80, "width": 40, "height": 30}));
+    run(&mut s, "drawing.create", json!({}));
+    let model: Vec<String> =
+        s.doc.param_defs().into_iter().map(|def| def.name).filter(|name| !s.doc.params.iter().any(|param| param.name == *name)).collect();
+    let (first, second) = (model[0].clone(), model[1].clone());
+    run(&mut s, "parameters.favorite", json!({"name": first, "favorite": true}));
+    let d = s.drawing("test").unwrap().clone();
+    let names = |listed: Vec<Listed>| listed.into_iter().map(|listed| (listed.name, listed.favourite)).collect::<Vec<_>>();
+    assert_eq!(names(parameters_listed(&s, &d, 0, false)), [("Length".to_string(), false), (first.clone(), true)]);
+    let all = names(parameters_listed(&s, &d, 0, true));
+    assert!(all.contains(&(second.clone(), false)) && all.contains(&("Length".to_string(), false)), "{all:?}");
+    let content = solidcraft_doc::drawing::short_form::from_text("L = {p.Length}").unwrap();
+    assert_eq!(note_preview(&s, &d, 0, &content), "L = 50 mm");
+}

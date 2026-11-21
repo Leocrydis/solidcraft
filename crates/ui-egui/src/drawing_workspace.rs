@@ -15,6 +15,7 @@ pub(crate) mod browser;
 pub(crate) mod detail;
 pub(crate) mod dimension;
 pub(crate) mod export;
+mod fields_dialog;
 mod first_sheet;
 pub(crate) mod note;
 mod panels;

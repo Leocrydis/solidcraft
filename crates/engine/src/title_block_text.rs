@@ -171,6 +171,35 @@ pub fn parameter_design<'s>(s: &'s Session, d: &Drawing, at: usize) -> Option<Op
     Some(s.drawn(d, source).ok())
 }
 
+/// A parameter a list of fields offers: its name, and whether it is one of the design's favourites.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Listed {
+    pub name: String,
+    pub favourite: bool,
+}
+
+/// The parameters a list of fields offers for sheet `at` of `d`, from the design its parameter fields
+/// read ([`parameter_design`]): its user parameters, then its favourites, each once; with `all`, every
+/// parameter it has (a feature's named inputs, `d1`, `d2`…, too). None when there is no design to read.
+pub fn parameters_listed(s: &Session, d: &Drawing, at: usize, all: bool) -> Vec<Listed> {
+    let Some(Some(design)) = parameter_design(s, d, at) else { return Vec::new() };
+    let doc = &design.doc;
+    let names: Vec<String> = if all {
+        doc.param_defs().into_iter().map(|def| def.name).collect()
+    } else {
+        doc.params.iter().map(|param| param.name.clone()).chain(doc.favorites.iter().cloned()).collect()
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    names.into_iter().filter(|name| seen.insert(name.clone())).map(|name| Listed { favourite: doc.favorites.contains(&name), name }).collect()
+}
+
+/// What `content` reads on sheet `at` of `d` now, by the rule its notes read by ([`read`]): what a
+/// note editor previews before the note is saved.
+pub fn note_preview(s: &Session, d: &Drawing, at: usize, content: &Content) -> String {
+    let state = s.model.state();
+    read(s, &mut Tree::new(&s.doc, &state), d, at, std::iter::once(content)).pop().unwrap_or_default()
+}
+
 /// The parameters `names` of `doc` it has, each as a sheet writes its value (none: it fails to
 /// evaluate). Every parameter is evaluated once, without the model.
 fn parameter_values(doc: &Document, names: &std::collections::BTreeSet<&str>) -> std::collections::BTreeMap<String, Option<String>> {

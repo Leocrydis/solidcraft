@@ -82,6 +82,55 @@ fn a_note_with_fields_opens_and_saves_with_its_fields() {
     assert_eq!(h.app.session.undo.len(), undo + 1, "one undo step");
 }
 
+/// The Note panel's one Fields… button opens the smart callout dialog. Clicking a field puts its short
+/// name into the text at the caret, and the dialog reads the note as it will be: with the field's
+/// value. Show all lists the model's parameters too.
+#[test]
+fn fields_opens_the_smart_callout_dialog_and_a_pick_goes_in_at_the_caret() {
+    let (mut h, _) = plate_sheet();
+    h.app.run("parameters.change", json!({"name": "Length", "expression": "100 mm"})).unwrap();
+    settle(&mut h);
+    assert!(crate::drawing_workspace::start(&mut h.app, "drawing.note"));
+    h.frames(4);
+    let text = crate::scenario::rect_of("drawing:note:text").unwrap().center();
+    h.step(&json!({"click": [text.x, text.y]})).unwrap();
+    h.step(&json!({"text": "L = "})).unwrap();
+    let fields = crate::scenario::rect_of("drawing:note:fields").unwrap().center();
+    h.step(&json!({"click": [fields.x, fields.y]})).unwrap();
+    h.frames(4);
+    assert!(crate::scenario::rect_of("smart_callout:search").is_some(), "the dialog is open");
+    for short in ["part", "pn", "mat", "p.Length", "sheet.no", "r.date"] {
+        assert!(crate::scenario::rect_of(&format!("dialog:list:smart_callout:{short}")).is_some(), "the dialog lists {{{short}}}");
+    }
+    let model = h.app.session.doc.param_defs().into_iter().map(|def| def.name).find(|name| name != "Length").unwrap();
+    assert!(crate::scenario::rect_of(&format!("dialog:list:smart_callout:p.{model}")).is_none(), "not the model's own");
+    h.step(&json!({"click": {"handle": "dialog:list:smart_callout:p.Length"}})).unwrap();
+    h.frames(4);
+    assert!(h.widget("L = {p.Length}").is_some(), "the field goes in at the caret");
+    assert!(h.widget("L = 100 mm").is_some(), "the dialog reads the note as it will be");
+    h.step(&json!({"widget": "Show all parameters"})).unwrap();
+    h.frames(4);
+    assert!(crate::scenario::rect_of(&format!("dialog:list:smart_callout:p.{model}")).is_some(), "Show all lists the model's parameters");
+}
+
+/// Typing an unclosed `{` opens the same dialog, narrowed to what follows the brace; a pick replaces
+/// what was typed with the whole short name.
+#[test]
+fn an_open_brace_opens_the_list_narrowed_to_what_follows() {
+    let (mut h, _) = plate_sheet();
+    assert!(crate::drawing_workspace::start(&mut h.app, "drawing.note"));
+    h.frames(4);
+    let text = crate::scenario::rect_of("drawing:note:text").unwrap().center();
+    h.step(&json!({"click": [text.x, text.y]})).unwrap();
+    h.step(&json!({"text": "IN {ma"})).unwrap();
+    h.frames(4);
+    assert!(crate::scenario::rect_of("dialog:list:smart_callout:mat").is_some(), "Material matches `ma`");
+    assert!(crate::scenario::rect_of("dialog:list:smart_callout:pn").is_none(), "Part number doesn't");
+    h.step(&json!({"click": {"handle": "dialog:list:smart_callout:mat"}})).unwrap();
+    h.frames(4);
+    assert!(h.widget("IN {mat}").is_some(), "the pick completes what was typed");
+}
+
 /// A right-click on the sheet opens the menu a sketch's right-click opens: it selects what is under
 /// the pointer first, offers Edit and Delete for it, then the tools, then Undo and Redo. On empty
 /// paper the selection stays, and a right-click with a tool in hand puts the tool down.

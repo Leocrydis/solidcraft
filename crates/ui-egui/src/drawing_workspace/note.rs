@@ -18,6 +18,10 @@ use crate::{
 #[derive(Default)]
 pub(super) struct Draft {
     text: String,
+    /// The Text box's id, for its caret: where a field picked in the smart callout dialog goes.
+    text_id: Option<egui::Id>,
+    /// The smart callout dialog, while it is open (the Fields… button, or an unclosed `{`).
+    fields: Option<super::fields_dialog::Dialog>,
     /// The preview last drawn: for this text, with the pointer here, on this sheet. Drawn again only
     /// when one of them changes.
     shown: Option<(String, Vec2, u64, Option<crate::drawing_sheet_page::Marks>)>,
@@ -51,14 +55,28 @@ pub(super) fn editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Option<u64
             None => Some(String::new()),
             Some(id) => app.session.drawing("drawing.inspect").ok().and_then(|drawing| Some(short_form::to_text(&drawing.notes.by_id(id)?.content))),
         };
-        app.drawing_workspace.note = text.map(|text| Draft { text, shown: None });
+        app.drawing_workspace.note = text.map(|text| Draft { text, ..Draft::default() });
     }
     let (cancel, save) = super::inset(ui, |ui| {
         let mut valid = false;
         if let Some(draft) = app.drawing_workspace.note.as_mut() {
-            let field = ui_kit::multiline_text_field(ui, tr("ui.drawing_panel.text"), ui.scope_id().with("note_text"), &mut draft.text);
+            let id = ui.scope_id().with("note_text");
+            let field = ui_kit::multiline_text_field(ui, tr("ui.drawing_panel.text"), id, &mut draft.text);
             crate::scenario::publish_rect("drawing:note:text", field.rect);
+            draft.text_id = Some(id);
             valid = ready(&draft.text);
+            // The one control beside the box: the smart callout dialog.
+            let fields = ui_kit::row(ui, "", |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui_kit::button(ui, tr("ui.smart_callout.open"), Button::Normal))
+                    .inner
+            });
+            crate::scenario::publish_rect("drawing:note:fields", fields.rect);
+            if fields.clicked() {
+                draft.fields.get_or_insert_with(Default::default);
+            }
+            if field.has_focus() && completing(&draft.text, caret(ui.ctx(), id)).is_some() {
+                draft.fields.get_or_insert_with(Default::default);
+            }
             if let Err(why) = short_form::from_text(&draft.text) {
                 let message = solidcraft_ui_text::format("ui.drawing_note.unreadable", &[("why", &why)]);
                 ui_kit::status_line(ui, &message, ui_kit::StatusTone::Warning);
@@ -74,6 +92,7 @@ pub(super) fn editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Option<u64
         })
         .inner
     });
+    fields_dialog(app, ui.ctx(), selected);
     if cancel {
         close_panel(app);
     } else if save
@@ -92,6 +111,58 @@ pub(super) fn editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Option<u64
             Err(error) => app.set_status(error, true),
         }
     }
+}
+
+/// The caret in the Text box `id`, as a character index, while the box keeps one.
+fn caret(ctx: &egui::Context, id: egui::Id) -> Option<usize> {
+    egui::TextEdit::load_state(ctx, id).and_then(|state| state.cursor.char_range()).map(|range| range.primary.index.0)
+}
+
+/// What follows an unclosed `{` just before the caret (`{ma|` gives `ma`), with the brace's character
+/// index: a short name being typed. A doubled `{{` is a brace, not a field.
+fn completing(text: &str, caret: Option<usize>) -> Option<(usize, String)> {
+    let before: Vec<char> = text.chars().take(caret?).collect();
+    let open = before.iter().rposition(|c| *c == '{')?;
+    let typed: String = before.get(open + 1..)?.iter().collect();
+    let doubled = open > 0 && before.get(open - 1) == Some(&'{');
+    (!doubled && !typed.contains(['}', '\n', ' '])).then_some((open, typed))
+}
+
+/// The smart callout dialog over the Note panel, while it is open: a field picked goes into the text
+/// at the caret, replacing a short name being typed after an unclosed `{`, and the caret moves past it.
+fn fields_dialog(app: &mut SolveApp, ctx: &egui::Context, selected: Option<u64>) {
+    let Some(mut draft) = app.drawing_workspace.note.take() else { return };
+    if let Some(mut dialog) = draft.fields.take() {
+        let at = draft.text_id.and_then(|id| caret(ctx, id));
+        let typing = completing(&draft.text, at);
+        let (closed, picked) =
+            super::fields_dialog::show(app, ctx, &mut dialog, &draft.text, selected, typing.as_ref().map(|(_, typed)| typed.as_str()));
+        if let Some(short) = picked {
+            let token = format!("{{{short}}}");
+            let chars: Vec<char> = draft.text.chars().collect();
+            let end = at.unwrap_or(chars.len()).min(chars.len());
+            let start = typing.map_or(end, |(open, _)| open);
+            let text: String = chars
+                .get(..start)
+                .into_iter()
+                .flatten()
+                .chain(token.chars().collect::<Vec<_>>().iter())
+                .chain(chars.get(end..).into_iter().flatten())
+                .collect();
+            draft.text = text;
+            if let Some(id) = draft.text_id {
+                let after = start + token.chars().count();
+                let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+                state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(after))));
+                state.store(ctx, id);
+                ctx.memory_mut(|memory| memory.request_focus(id));
+            }
+        }
+        if !closed {
+            draft.fields = Some(dialog);
+        }
+    }
+    app.drawing_workspace.note = Some(draft);
 }
 
 pub(crate) fn on_sheet(app: &mut SolveApp, painter: &egui::Painter, at: crate::drawing_sheet_page::OnScreen, point: Vec2, sheet: u64, clicked: bool) {
