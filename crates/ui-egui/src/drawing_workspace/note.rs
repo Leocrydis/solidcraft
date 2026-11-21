@@ -81,7 +81,10 @@ pub(super) fn editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Option<u64
             if field.has_focus() && completing(&draft.text, caret(ui.ctx(), id)).is_some() {
                 draft.fields.get_or_insert_with(Default::default);
             }
-            if let Err(why) = short_form::from_text(&short_form::expand(&draft.text, &aliases)) {
+            // A short name still being typed after `{` isn't wrong yet: the dialog's list is its answer.
+            let typing = draft.fields.is_some() && completing(&draft.text, caret(ui.ctx(), id)).is_some();
+            let unreadable = if typing { Ok(()) } else { short_form::from_text(&short_form::expand(&draft.text, &aliases)).map(|_| ()) };
+            if let Err(why) = unreadable {
                 let message = solidcraft_ui_text::format("ui.drawing_note.unreadable", &[("why", &why)]);
                 ui_kit::status_line(ui, &message, ui_kit::StatusTone::Warning);
             } else if selected.is_none() {
@@ -139,8 +142,12 @@ fn fields_dialog(app: &mut SolveApp, ctx: &egui::Context, selected: Option<u64>)
     if let Some(mut dialog) = draft.fields.take() {
         let at = draft.text_id.and_then(|id| caret(ctx, id));
         let typing = completing(&draft.text, at);
+        let placed = app.drawing_workspace.callout_dialog_at;
         let (closed, picked, aliases) =
-            super::fields_dialog::show(app, ctx, &mut dialog, &draft.text, selected, typing.as_ref().map(|(_, typed)| typed.as_str()));
+            super::fields_dialog::show(app, ctx, &mut dialog, &draft.text, selected, typing.as_ref().map(|(_, typed)| typed.as_str()), placed);
+        if let Some(rect) = ctx.memory(|memory| memory.area_rect(super::fields_dialog::window_id())) {
+            app.drawing_workspace.callout_dialog_at = Some(rect.left_top());
+        }
         if let Some(aliases) = aliases {
             app.preferences.smart_callout_aliases = aliases;
         }

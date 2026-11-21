@@ -209,21 +209,30 @@ fn parameter_values(doc: &Document, names: &std::collections::BTreeSet<&str>) ->
         .iter()
         .filter_map(|name| {
             defs.iter().find(|def| def.name == *name)?;
-            // The unit `param_display_value` writes the value in: the parameter's own, or its kind's.
-            let unit = match doc.param(name) {
-                Some(param) => param.unit.clone(),
-                None => values.get(*name).and_then(|value| value.kind()).map(|kind| kind.default_unit().to_string()).unwrap_or_default(),
+            let value = values.get(*name);
+            let kind = value.and_then(|value| value.kind());
+            // The unit it reads in: the one a plain number was typed in (`1.5 mm` in an inch design
+            // reads `1.5 mm`), else the parameter's own, else its kind's.
+            let typed = doc
+                .param(name)
+                .and_then(|param| solidcraft_doc::expr::literal_unit(&param.expr))
+                .filter(|unit| solidcraft_doc::expr::unit_info(unit).map(|(k, _)| k) == kind);
+            let unit = match (typed, doc.param(name)) {
+                (Some(unit), _) => unit,
+                (None, Some(param)) => param.unit.clone(),
+                (None, None) => kind.map(|kind| kind.default_unit().to_string()).unwrap_or_default(),
             };
-            let shown = doc.param_display_value(&values, name).map(|value| written(value, &unit));
+            let shown = value.map(|value| written(solidcraft_doc::expr::value_in_unit(*value, &unit), &unit));
             Some((name.to_string(), shown))
         })
         .collect()
 }
 
-/// A parameter's value in its own unit as a sheet writes it: twelve significant digits, then the
-/// unit (`50 mm`, `2.5 in`), `°` for degrees, nothing for a unit-less number.
+/// A parameter's value in `unit` as a sheet writes it: six significant digits, no trailing zeros, then
+/// the unit (`50 mm`, `0.0590551 in`), `°` for degrees, nothing for a unit-less number.
 fn written(value: f64, unit: &str) -> String {
-    let number = solidcraft_doc::expr::round_reported(value);
+    let number = if value.is_finite() { format!("{value:.5e}").parse::<f64>().unwrap_or(value) } else { value };
+    let number = if number == 0.0 { 0.0 } else { number };
     match unit.trim() {
         "" => format!("{number}"),
         "deg" => format!("{number}°"),

@@ -33,6 +33,8 @@ pub struct State {
     options: Option<Tool>,
     placement: Option<placement::Placement>,
     note: Option<note::Draft>,
+    /// Where the smart callout dialog's top left was when it last showed: it opens there again.
+    callout_dialog_at: Option<egui::Pos2>,
     view_edit: Option<panels::ViewEdit>,
     detail: Option<detail::Draft>,
     export: Option<export::ExportForm>,

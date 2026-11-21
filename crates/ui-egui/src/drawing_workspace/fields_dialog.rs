@@ -133,6 +133,26 @@ fn refusal(why: short_form::AliasRefused) -> &'static str {
     })
 }
 
+/// The dialog's window, the same each time it opens: where it was is kept between openings.
+pub(super) fn window_id() -> egui::Id {
+    egui::Id::unique("sc_smart_callout")
+}
+
+/// One row of the list: the field's name in words on the left, its short name in a column, the whole
+/// row one pick (its accessible name says both).
+fn field_row(ui: &mut egui::Ui, key: &str, label: &str, short: &str) -> egui::Response {
+    let response = ui_kit::list_picker(ui, key, "", false);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("{label} {{{short}}}")));
+    let t = Tokens::get();
+    let inner = response.rect.shrink2(egui::vec2(t.space_8, 0.0));
+    let column = inner.left() + inner.width() * 0.6;
+    let name = egui::Rect::from_min_max(inner.min, egui::pos2(column - t.space_8, inner.bottom()));
+    let code = egui::Rect::from_min_max(egui::pos2(column, inner.top()), inner.max);
+    ui_kit::paint_text(ui, name, label, egui::FontId::proportional(t.font_label), t.form_ink, false);
+    ui_kit::paint_text(ui, code, &format!("{{{short}}}"), egui::FontId::monospace(t.font_label), t.form_dim, false);
+    response
+}
+
 /// Whether `entry` matches what was searched: its name in words or its short name, ignoring case.
 fn matches(entry: &Entry, search: &str) -> bool {
     let search = search.trim().to_lowercase();
@@ -143,7 +163,7 @@ fn matches(entry: &Entry, search: &str) -> bool {
 /// what follows an unclosed `{` at the caret, when there is one: the list narrows to it and the
 /// search box shows it. Returns whether to close, the short name of the field picked, and the
 /// user's aliases when they changed. A field clicked while an alias is being typed is what the alias
-/// will stand for, not a pick.
+/// will stand for, not a pick. `placed` is where the dialog's top left was when it last showed.
 pub(super) fn show(
     app: &SolveApp,
     ctx: &egui::Context,
@@ -151,6 +171,7 @@ pub(super) fn show(
     text: &str,
     note: Option<u64>,
     completing: Option<&str>,
+    placed: Option<egui::Pos2>,
 ) -> (bool, Option<String>, Option<std::collections::BTreeMap<String, String>>) {
     let mut aliases = None;
     let tr = solidcraft_ui_text::tr;
@@ -162,10 +183,17 @@ pub(super) fn show(
             (Ok(drawing), Some(at)) => Some(solidcraft_engine::title_block_text::note_preview(&app.session, drawing, at, &content)),
             _ => None,
         },
+        // A short name still being typed after `{` isn't wrong yet: the list is its answer.
+        Err(_) if completing.is_some() => None,
         Err(why) => Some(solidcraft_ui_text::format("ui.drawing_note.unreadable", &[("why", &why)])),
     };
     let mut picked = None;
-    let closed = ui_kit::Window::new(egui::Id::unique("sc_smart_callout"), "drawing_note", tr("ui.smart_callout.title")).show_body(ctx, |ui| {
+    let window = ui_kit::Window::new(window_id(), "drawing_note", tr("ui.smart_callout.title"));
+    let window = match placed {
+        Some(at) => window.placed(egui::Align2::LEFT_TOP, at),
+        None => window,
+    };
+    let closed = window.show_body(ctx, |ui| {
         ui_kit::scope(ui, |ui| {
             let mut typed = search.clone();
             let field = ui_kit::search_field(ui, egui::Id::unique("sc_smart_callout_search"), &mut typed, tr("ui.smart_callout.search"));
@@ -188,15 +216,15 @@ pub(super) fn show(
                         ui_kit::section_heading(ui, section.heading());
                     }
                     for entry in rows {
-                        let row = format!("{}    {{{}}}", entry.label, entry.short);
                         if entry.section == Section::Aliases {
+                            let row = format!("{}    {{{}}}", entry.label, entry.short);
                             let alias = entry.label.trim_end_matches(" \u{2192}").to_string();
                             if ui_kit::list_row(ui, &format!("smart_callout:alias:{alias}"), &row).clicked() {
                                 let mut kept = app.preferences.smart_callout_aliases.clone();
                                 kept.remove(&alias);
                                 aliases = Some(kept);
                             }
-                        } else if ui_kit::list_picker(ui, &format!("smart_callout:{}", entry.short), &row, false).clicked() {
+                        } else if field_row(ui, &format!("smart_callout:{}", entry.short), &entry.label, &entry.short).clicked() {
                             if dialog.alias.trim().is_empty() {
                                 picked = Some(entry.short.clone());
                             } else {
@@ -206,7 +234,10 @@ pub(super) fn show(
                     }
                 }
             });
-            // The one row that makes an alias: its text, the field it stands for, Add.
+            // The one row that makes an alias, under its own heading: its text, the field it stands
+            // for, Add.
+            ui_kit::divider(ui, "smart_callout_new_alias");
+            ui_kit::section_heading(ui, tr("ui.smart_callout.alias_new"));
             let why = short_form::alias_refused(&dialog.alias, &dialog.target);
             let full = app.preferences.smart_callout_aliases.len() >= short_form::MAX_ALIASES;
             for (key, label, value, hint) in [

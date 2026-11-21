@@ -724,6 +724,18 @@ pub fn is_literal(s: &str) -> bool {
     }
 }
 
+/// The unit a literal was typed in (`mm` for `1.5 mm`, `in` for `-2 inch`'s `inch`); none for a bare
+/// number or anything that isn't a literal ([`is_literal`]).
+pub fn literal_unit(s: &str) -> Option<String> {
+    if !is_literal(s) {
+        return None;
+    }
+    match lex(s).ok()?.last() {
+        Some(Tok::Id(u)) => Some(canonical_unit(u).to_string()),
+        _ => None,
+    }
+}
+
 /// Is the expression a bare number without a unit, like `20`, `-1.5` or `2,5`? A leading `=` only marks
 /// a formula (#4681), so `=20` is the same bare number.
 pub fn is_bare_number(s: &str) -> bool {
@@ -1813,6 +1825,10 @@ mod tests {
         assert_eq!(rename_reference("10 mm", "mm", "x"), "10 mm");
         assert!(is_literal("20") && is_literal("-1.5 in") && is_literal("3 deg"));
         assert!(!is_literal("d1") && !is_literal("2 * 3") && !is_literal("2 width"));
+        assert_eq!(literal_unit("1.5 mm").as_deref(), Some("mm"));
+        assert_eq!(literal_unit("-2 inch").as_deref(), Some("inch"));
+        assert_eq!(literal_unit("20"), None);
+        assert_eq!(literal_unit("d1 * 2 mm"), None);
         assert!(is_bare_number(" -1.5 ") && is_bare_number("+2") && !is_bare_number("20 mm") && !is_bare_number("(2)"));
         // A leading `=` only marks a formula (#4681): `=5` is the bare number `5`, not `==5`.
         assert!(is_bare_number("=5") && is_bare_number(" = -1.5") && !is_bare_number("=5 mm") && !is_bare_number("==5") && !is_bare_number("=d3"));

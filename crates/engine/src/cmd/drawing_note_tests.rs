@@ -466,6 +466,23 @@ fn a_parameter_field_reads_the_designs_parameter_and_follows_it() {
     assert_eq!(saved(&s), before, "the refused edit changed nothing");
 }
 
+/// In an inch design a parameter typed as a plain number with a unit reads in the unit it was typed
+/// in, and one worked out reads in the parameter's own unit to six significant digits.
+#[test]
+fn a_parameter_field_reads_in_the_unit_it_was_typed_in_and_rounds_a_worked_out_value() {
+    let mut s = Session::default();
+    run(&mut s, "document.units", json!({"units": "in"}));
+    run(&mut s, "parameters.add", json!({"name": "Thick", "expression": "1.5 mm"}));
+    run(&mut s, "parameters.add", json!({"name": "Third", "expression": "Thick / 3 + 1 in"}));
+    run(&mut s, "solid.box", json!({"length": 80, "width": 40, "height": 30}));
+    run(&mut s, "drawing.create", json!({}));
+    let field = |key: &str| json!({"field": {"source": "parameter", "key": key}});
+    let content = json!([field("Thick"), {"text": " / "}, field("Third")]);
+    let note = run(&mut s, ADD, json!({"anchor": {"sheet": "Sheet 1"}, "at": [20, 20], "content": content}))["note"].clone();
+    let reply = run(&mut s, INSPECT, json!({"note": note}));
+    assert_eq!(reply["text"], json!("1.5 mm / 1.01969 in"), "{reply}");
+}
+
 #[test]
 fn hostile_notes_are_refused() {
     let (mut s, _, view, [bracket, _]) = placed();
