@@ -1434,3 +1434,39 @@ fn insert_design_accepts_matrix_and_rotation_placement() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Part library folders: a linked design that isn't where its link says is looked for by name in
+/// the part library folders, each folder and then its subfolders. Update Links reads it from there
+/// and says where; the link keeps naming its own file. Without the folder it isn't found.
+#[test]
+fn a_part_moved_into_a_library_folder_is_found_there_and_said_so() {
+    let root = folder("part-library");
+    let (job, library) = (root.join("job"), root.join("library"));
+    std::fs::create_dir_all(job.join("parts")).unwrap();
+    std::fs::create_dir_all(library.join("fasteners")).unwrap();
+    let bolt = job.join("parts").join("bolt.sc");
+    part(&bolt, 10);
+    let mut s = Session::default();
+    run(&mut s, "file.save", json!({"path": job.join("top.sc")}));
+    run(&mut s, "component.insert_design", json!({"path": bolt}));
+    run(&mut s, "file.save", json!({}));
+    // The part moves into the library, one folder down, and changes there.
+    let moved = library.join("fasteners").join("bolt.sc");
+    std::fs::rename(&bolt, &moved).unwrap();
+    part(&moved, 25);
+    // Without a library folder it isn't found.
+    assert!(s.execute("component.update_links", &json!({})).is_err());
+    crate::set_part_library_folders(vec![library.to_string_lossy().into_owned()]);
+    let updated = s.execute("component.update_links", &json!({}));
+    crate::set_part_library_folders(Vec::new());
+    let updated = updated.unwrap();
+    assert_eq!(updated["updated"], json!(["bolt"]), "{updated}");
+    let note = updated["warnings"].as_array().unwrap().iter().filter_map(Value::as_str).find(|w| w.contains("found in the library folder"));
+    assert!(note.is_some_and(|n| n.starts_with("bolt: not at") && n.contains("fasteners")), "{updated}");
+    assert!((volume(&mut s) - 5000.0).abs() < 1e-6, "the library's part came in: {}", volume(&mut s));
+    run(&mut s, "file.save", json!({}));
+    let mut reopened = Session::default();
+    run(&mut reopened, "doc.open", json!({"path": job.join("top.sc")}));
+    assert_eq!(run(&mut reopened, "component.links", json!({}))["links"][0]["path"], "parts/bolt.sc", "the link still names its own file");
+    let _ = std::fs::remove_dir_all(root);
+}

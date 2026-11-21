@@ -1759,6 +1759,11 @@ preference_settings! {
     /// (`link_folders_prompt`): those the user answered Load for. Kept in the user's settings,
     /// never in a design.
     linked_file_folders: Vec<String> = Vec::new(), PAGE_GENERAL;
+    /// Part library folders: where a linked design that isn't where its link says is looked for
+    /// by name (each folder, then its subfolders), when Update Links reads it. Kept in the user's
+    /// settings, never in a design; a trust list is `linked_file_folders`, not this. Empty (the
+    /// default): links are read from their own path only, as before.
+    part_library_folders: Vec<String> = Vec::new(), PAGE_GENERAL;
     /// What a middle-button double-click in the view does: `home`, `fit` or `off`.
     middle_double_click: String = "home".into(), PAGE_NAVIGATION;
     /// A view chosen on the navigator (a face, corner or arrow, an axis tip) also frames the
@@ -2816,12 +2821,14 @@ pub(crate) fn sync_surface_analysis(app: &mut SolveApp) {
     }
 }
 
-/// The network locations the files a design names may be on follow the preferences.
+/// Where the files a design names may be (network locations) and where a missing linked design
+/// is looked for (part library folders) follow the preferences.
 pub fn apply_network(p: &Prefs) {
     solidcraft_engine::io::vfs::set_network_policy(solidcraft_engine::io::vfs::NetworkPolicy {
         allow_all: p.network_locations,
         hosts: p.network_hosts.clone(),
     });
+    solidcraft_engine::set_part_library_folders(p.part_library_folders.clone());
 }
 
 /// A new, empty design takes the preferred units (not an undo step, not a change to save).
@@ -7429,6 +7436,7 @@ mod tests {
             ("trusted_signing_keys", json!("0123456789ABCDEF0123456789ABCDEF01234567"), PAGE_SECURITY),
             ("verify_opened_designs", json!(true), PAGE_SECURITY),
             ("linked_file_folders", json!(["/work/parts"]), PAGE_GENERAL),
+            ("part_library_folders", json!(["/work/library"]), PAGE_GENERAL),
         ];
         let defaults = serde_json::to_value(Prefs::default()).unwrap();
         for (field, value, owner) in fields {

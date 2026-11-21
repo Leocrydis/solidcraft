@@ -1,0 +1,50 @@
+{
+  "en": {
+    "prefs.part_library_folders_note": "Part library folders: a linked part that isn't where its link says is looked for here by name, in each folder and then its subfolders, when you update links.",
+    "prefs.part_library_folders_none": "No part library folders.",
+    "prefs.part_library_folders_add": "Add folder…",
+    "prefs.part_library_folders_remove": "Remove"
+  },
+  "ar": {
+    "prefs.part_library_folders_note": "مجلدات مكتبة الأجزاء: يُبحث هنا بالاسم عن جزء مرتبط ليس حيث يقول رابطه، في كل مجلد ثم في مجلداته الفرعية، عند تحديث الروابط.",
+    "prefs.part_library_folders_none": "لا توجد مجلدات لمكتبة الأجزاء.",
+    "prefs.part_library_folders_add": "إضافة مجلد…",
+    "prefs.part_library_folders_remove": "إزالة"
+  },
+  "he": {
+    "prefs.part_library_folders_note": "תיקיות ספריית חלקים: חלק מקושר שאינו במקום שהקישור שלו מציין מחופש כאן לפי שם, בכל תיקייה ואז בתיקיות המשנה שלה, כשמעדכנים קישורים.",
+    "prefs.part_library_folders_none": "אין תיקיות ספריית חלקים.",
+    "prefs.part_library_folders_add": "הוספת תיקייה…",
+    "prefs.part_library_folders_remove": "הסרה"
+  },
+  "ja": {
+    "prefs.part_library_folders_note": "部品ライブラリ フォルダー: リンクを更新するとき、リンク先にないリンク部品を、各フォルダーとそのサブフォルダーで名前から探します。",
+    "prefs.part_library_folders_none": "部品ライブラリ フォルダーはありません。",
+    "prefs.part_library_folders_add": "フォルダーを追加…",
+    "prefs.part_library_folders_remove": "削除"
+  },
+  "vi": {
+    "prefs.part_library_folders_note": "Thư mục thư viện chi tiết: khi cập nhật liên kết, một chi tiết liên kết không ở nơi liên kết chỉ tới sẽ được tìm theo tên ở đây, trong từng thư mục rồi đến các thư mục con.",
+    "prefs.part_library_folders_none": "Chưa có thư mục thư viện chi tiết.",
+    "prefs.part_library_folders_add": "Thêm thư mục…",
+    "prefs.part_library_folders_remove": "Xóa"
+  },
+  "zh": {
+    "prefs.part_library_folders_note": "零件库文件夹：更新链接时，不在链接所指位置的链接零件会按名称在这里查找，先在每个文件夹中，再在其子文件夹中。",
+    "prefs.part_library_folders_none": "没有零件库文件夹。",
+    "prefs.part_library_folders_add": "添加文件夹…",
+    "prefs.part_library_folders_remove": "移除"
+  },
+  "de": {
+    "prefs.part_library_folders_note": "Teilebibliotheksordner: Ein verknüpftes Teil, das nicht dort ist, wo seine Verknüpfung hinzeigt, wird beim Aktualisieren der Verknüpfungen hier nach Namen gesucht, in jedem Ordner und dann in seinen Unterordnern.",
+    "prefs.part_library_folders_none": "Keine Teilebibliotheksordner.",
+    "prefs.part_library_folders_add": "Ordner hinzufügen…",
+    "prefs.part_library_folders_remove": "Entfernen"
+  },
+  "ko": {
+    "prefs.part_library_folders_note": "부품 라이브러리 폴더: 링크를 업데이트할 때, 링크가 가리키는 곳에 없는 연결 부품을 여기서 이름으로 찾습니다. 각 폴더를 먼저, 그다음 하위 폴더를 찾습니다.",
+    "prefs.part_library_folders_none": "부품 라이브러리 폴더가 없습니다.",
+    "prefs.part_library_folders_add": "폴더 추가…",
+    "prefs.part_library_folders_remove": "제거"
+  }
+}

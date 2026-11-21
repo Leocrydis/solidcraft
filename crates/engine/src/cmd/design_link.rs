@@ -299,10 +299,98 @@ pub(super) fn read_linked_file(file: &Path, design: Option<&str>) -> Result<Vec<
         .map_err(|e| io_problem(&shown, &solidcraft_io::limits::explain(solidcraft_io::limits::Kind::Design, e)))
 }
 
+/// The part library folders: searched for a linked design that isn't where its link says. Set
+/// from Preferences ([`set_part_library_folders`]); `SOLIDCRAFT_PART_LIBRARY` adds folders for
+/// runs that read no preferences.
+static PART_LIBRARY: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// The most subfolders of one library folder searched.
+const LIBRARY_SUBFOLDERS: usize = 64;
+
+/// Search `folders`, in order, for linked designs that aren't where their links say, from now on.
+/// The app sets it from its preferences; blank entries are left out.
+pub fn set_part_library_folders(folders: Vec<String>) {
+    let folders = folders.into_iter().map(|f| f.trim().to_string()).filter(|f| !f.is_empty()).map(PathBuf::from).collect();
+    if let Ok(mut kept) = PART_LIBRARY.lock() {
+        *kept = folders;
+    }
+}
+
+/// The part library folders: the ones set, then `SOLIDCRAFT_PART_LIBRARY`'s (separated as `PATH`
+/// is).
+fn part_library_folders() -> Vec<PathBuf> {
+    let mut folders = PART_LIBRARY.lock().map(|kept| kept.clone()).unwrap_or_default();
+    if let Some(list) = solidcraft_geom::env::var_os("PART_LIBRARY") {
+        folders.extend(std::env::split_paths(&list).filter(|p| !p.as_os_str().is_empty()));
+    }
+    folders
+}
+
+/// Where a linked design missing at `file` was found in a part library folder, and the folder;
+/// none for a file that is there, or with no folders.
+pub(super) fn found_in_library(file: &Path) -> Option<(PathBuf, PathBuf)> {
+    let folders = part_library_folders();
+    if folders.is_empty() || file.exists() {
+        return None;
+    }
+    search_library(file, &folders)
+}
+
+/// `file`'s name looked for in each of `folders`, in order: in the folder itself, then in its
+/// subfolders (by name, at most [`LIBRARY_SUBFOLDERS`]; a link to a folder is not followed). So
+/// one folder of parts and a folder of such folders both work.
+fn search_library(file: &Path, folders: &[PathBuf]) -> Option<(PathBuf, PathBuf)> {
+    let name = file.file_name()?;
+    for folder in folders {
+        let direct = folder.join(name);
+        if direct.is_file() {
+            return Some((direct, folder.clone()));
+        }
+        let Ok(entries) = std::fs::read_dir(folder) else { continue };
+        let mut subfolders: Vec<PathBuf> = entries.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).map(|e| e.path()).collect();
+        subfolders.sort();
+        if let Some(found) = subfolders.iter().take(LIBRARY_SUBFOLDERS).map(|sub| sub.join(name)).find(|p| p.is_file()) {
+            return Some((found, folder.clone()));
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    /// Part library folders: a file's name is looked for in each folder, then in its subfolders,
+    /// in order; the first match wins; past 64 subfolders nothing more is read.
+    #[test]
+    fn a_missing_design_is_looked_for_in_the_library_folders_in_order() {
+        let root = std::env::temp_dir().join(format!("solidcraft-part-library-{}", std::process::id()));
+        let (first, second) = (root.join("first"), root.join("second"));
+        for dir in [first.join("bolts"), second.clone()] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let missing = root.join("job").join("bolt.sc");
+        assert_eq!(search_library(&missing, &[first.clone(), second.clone()]), None);
+        std::fs::write(second.join("bolt.sc"), b"x").unwrap();
+        assert_eq!(search_library(&missing, &[first.clone(), second.clone()]), Some((second.join("bolt.sc"), second.clone())));
+        // A subfolder of the first folder comes before the second folder.
+        std::fs::write(first.join("bolts").join("bolt.sc"), b"x").unwrap();
+        assert_eq!(search_library(&missing, &[first.clone(), second.clone()]), Some((first.join("bolts").join("bolt.sc"), first.clone())));
+        // Directly in the folder comes before its subfolders.
+        std::fs::write(first.join("bolt.sc"), b"x").unwrap();
+        assert_eq!(search_library(&missing, &[first.clone(), second.clone()]).map(|f| f.0), Some(first.join("bolt.sc")));
+        // Only the first 64 subfolders, by name, are read.
+        let many = root.join("many");
+        for i in 0..=LIBRARY_SUBFOLDERS {
+            std::fs::create_dir_all(many.join(format!("{i:03}"))).unwrap();
+        }
+        std::fs::write(many.join(format!("{LIBRARY_SUBFOLDERS:03}")).join("bolt.sc"), b"x").unwrap();
+        assert_eq!(search_library(&missing, std::slice::from_ref(&many)), None, "the 65th subfolder is not read");
+        std::fs::write(many.join("000").join("bolt.sc"), b"x").unwrap();
+        assert!(search_library(&missing, &[many]).is_some());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn link_paths_are_kept_relative_to_the_design_and_follow_save_as() {

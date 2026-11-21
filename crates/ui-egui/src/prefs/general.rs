@@ -132,6 +132,7 @@ pub(super) fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 }
             }
             link_folders(app, ui);
+            part_library_folders(app, ui);
             ui.horizontal(|ui| {
                 let (single, tip) = (app.tr("ui.slicer_single_instance").to_string(), app.tr("ui.slicer_single_instance_tip").to_string());
                 let width = (ui.available_width() - t.space_16 - ui.spacing().item_spacing.x).max(0.0);
@@ -303,5 +304,44 @@ fn link_folders(app: &mut SolveApp, ui: &mut egui::Ui) {
     crate::scenario::publish_target("prefs:link_folders:clear", clear.rect);
     if clear.clicked() {
         app.preferences.linked_file_folders.clear();
+    }
+}
+
+/// The part library folders (`part_library_folders`): where Update Links looks for a linked design
+/// that isn't where its link says. Each can be removed; Add folder… picks another.
+fn part_library_folders(app: &mut SolveApp, ui: &mut egui::Ui) {
+    let t = Tokens::get();
+    ui.horizontal_wrapped(|ui| ui_kit::settings_inline_note(ui, app.tr("prefs.part_library_folders_note")));
+    if app.preferences.part_library_folders.is_empty() {
+        ui.horizontal_wrapped(|ui| ui_kit::settings_inline_note(ui, app.tr("prefs.part_library_folders_none")));
+    }
+    let mut remove = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(t.space_6, t.space_6);
+        for (i, folder) in app.preferences.part_library_folders.iter().enumerate() {
+            let chip = ui_kit::SettingsChip {
+                key: Some(folder),
+                monospace: true,
+                remove: Some(app.tr("prefs.part_library_folders_remove")),
+                ..Default::default()
+            };
+            let button = ui_kit::settings_chip(ui, folder, chip);
+            crate::scenario::publish_target(&format!("prefs:part_library_folder:{i}:remove"), button.rect);
+            if button.clicked() {
+                remove = Some(i);
+            }
+        }
+    });
+    if let Some(i) = remove.filter(|i| *i < app.preferences.part_library_folders.len()) {
+        app.preferences.part_library_folders.remove(i);
+    }
+    let add = ui_kit::button(ui, app.tr("prefs.part_library_folders_add"), ui_kit::Button::Normal);
+    crate::scenario::publish_target("prefs:part_library_folders:add", add.rect);
+    if add.clicked() {
+        app.pick_folder(|app, folder| {
+            if let Some(folder) = folder.filter(|f| !app.preferences.part_library_folders.contains(f)) {
+                app.preferences.part_library_folders.push(folder);
+            }
+        });
     }
 }
