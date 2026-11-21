@@ -425,6 +425,47 @@ fn a_field_its_source_lacks_is_refused_and_one_saved_reads_unknown() {
     assert_eq!(reply["fields"], json!([{"source": "component", "key": "weight", "state": "unknown", "why": why}]));
 }
 
+/// A parameter field reads the design's parameter by its name, in the parameter's own unit, and
+/// follows a change; once the parameter is deleted the field reads lost and says nothing. A name
+/// the design doesn't have is refused at add and at edit, with the closest one, and the note is
+/// left as it was.
+#[test]
+fn a_parameter_field_reads_the_designs_parameter_and_follows_it() {
+    let mut s = Session::default();
+    run(&mut s, "parameters.change", json!({"name": "Length", "expression": "50 mm"}));
+    run(&mut s, "parameters.add", json!({"name": "Holes", "expression": "4", "unit": ""}));
+    run(&mut s, "parameters.change", json!({"name": "Bend", "expression": "30 deg"}));
+    run(&mut s, "solid.box", json!({"length": 80, "width": 40, "height": 30}));
+    run(&mut s, "drawing.create", json!({}));
+    let field = |key: &str| json!({"field": {"source": "parameter", "key": key}});
+    let content = json!([{"text": "L "}, field("Length"), {"text": ", "}, field("Holes"), {"text": " holes, "}, field("Bend")]);
+    let note = run(&mut s, ADD, json!({"anchor": {"sheet": "Sheet 1"}, "at": [20, 20], "content": content}))["note"].clone();
+    let inspect = |s: &mut Session| run(s, INSPECT, json!({"note": note}));
+    let on_model = |s: &mut Session, id: &str, p: Value| {
+        let drawing = json!({"drawing": ids::encode(s.drawing("test").unwrap().id)});
+        run(s, "drawing.close", json!({}));
+        run(s, id, p);
+        run(s, "drawing.open", drawing);
+    };
+    let reply = inspect(&mut s);
+    assert_eq!(reply["text"], json!("L 50 mm, 4 holes, 30°"), "{reply}");
+    assert_eq!(reply["fields"][0], json!({"source": "parameter", "key": "Length", "state": "shown", "value": "50 mm"}));
+    on_model(&mut s, "parameters.change", json!({"name": "Length", "expression": "62.5 mm"}));
+    assert_eq!(inspect(&mut s)["text"], json!("L 62.5 mm, 4 holes, 30°"));
+    on_model(&mut s, "parameters.delete", json!({"name": "Holes"}));
+    let reply = inspect(&mut s);
+    assert_eq!(reply["text"], json!("L 62.5 mm,  holes, 30°"));
+    assert_eq!(reply["fields"][1], json!({"source": "parameter", "key": "Holes", "state": "lost"}));
+    // An unknown name is refused, naming the closest; the refused edit changes nothing.
+    let typo = json!([field("Lenght")]);
+    let e = refused(&mut s, ADD, json!({"anchor": {"sheet": "Sheet 1"}, "at": [20, 40], "content": typo}));
+    assert!(e.contains("the design has no parameter `Lenght`; did you mean `Length`?"), "{e}");
+    let before = saved(&s);
+    let e = refused(&mut s, EDIT, json!({"note": note, "set": {"content": [field("Width")]}}));
+    assert!(e.contains("the design has no parameter `Width`"), "{e}");
+    assert_eq!(saved(&s), before, "the refused edit changed nothing");
+}
+
 #[test]
 fn hostile_notes_are_refused() {
     let (mut s, _, view, [bracket, _]) = placed();

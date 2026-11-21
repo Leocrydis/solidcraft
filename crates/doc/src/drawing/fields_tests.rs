@@ -34,7 +34,7 @@ fn field(source: Source, key: &str) -> Part {
 
 fn shown(d: &Drawing, sheet: usize, component: Option<Component>, parts: Vec<Part>) -> String {
     let component = component.map_or(Documented::Nothing, Documented::Present);
-    Values { drawing: d, sheet, component }.text(&Content(parts))
+    Values { drawing: d, sheet, component, parameters: Parameters::Nothing }.text(&Content(parts))
 }
 
 /// The drawing's own fields: its name, its number (its part number property), its organization
@@ -110,16 +110,18 @@ fn empty_fields_are_named_by_source_and_key() {
         field(Source::Prompt, "checked_by"),
         field(Source::Revision, "date"),
     ]);
-    let empty = |d: &Drawing| Values { drawing: d, sheet: 0, component: Documented::Present(bracket) }.empty_fields(&content);
+    let empty = |d: &Drawing| {
+        Values { drawing: d, sheet: 0, component: Documented::Present(bracket), parameters: Parameters::Nothing }.empty_fields(&content)
+    };
     assert_eq!(empty(&d), ["component.part_number", "prompt.checked_by"]);
     Arc::make_mut(&mut d.revisions).add(None, 901).unwrap();
     assert_eq!(empty(&d), ["component.part_number", "prompt.checked_by", "revision.date"]);
     Arc::make_mut(&mut d.revisions).set(901, Field::Date, "2026-11-07").unwrap();
     assert_eq!(empty(&d), ["component.part_number", "prompt.checked_by"]);
-    let lost = Values { drawing: &d, sheet: 0, component: Documented::Gone }.empty_fields(&content);
+    let lost = Values { drawing: &d, sheet: 0, component: Documented::Gone, parameters: Parameters::Nothing }.empty_fields(&content);
     assert_eq!(lost, ["component.name", "component.part_number", "prompt.checked_by"], "a component since deleted");
     let unknown = Content(vec![field(Source::Component, "weight"), field(Source::Sheet, "page")]);
-    let present = Values { drawing: &d, sheet: 0, component: Documented::Present(bracket) };
+    let present = Values { drawing: &d, sheet: 0, component: Documented::Present(bracket), parameters: Parameters::Nothing };
     assert_eq!(present.empty_fields(&unknown), ["component.weight", "sheet.page"], "a drawing saved with fields its sources lack");
 }
 
@@ -182,7 +184,7 @@ fn each_field_is_shown_empty_or_lost() {
     let metadata = Metadata::default();
     let bracket = Component { name: "Bracket", metadata: &metadata, properties: None, material: None, mass: None };
     let blank = BTreeMap::from([("finish".to_string(), String::new())]);
-    let state = |component, source, key| Values { drawing: &d, sheet: 0, component }.state(source, key);
+    let state = |component, source, key| Values { drawing: &d, sheet: 0, component, parameters: Parameters::Nothing }.state(source, key);
     let present = Documented::Present(bracket);
     assert_eq!(state(present, Source::Component, "name"), FieldState::Shown("Bracket".into()));
     assert_eq!(state(present, Source::Component, "material"), FieldState::Empty);
@@ -197,8 +199,29 @@ fn each_field_is_shown_empty_or_lost() {
     assert_eq!(state(Documented::Gone, Source::Sheet, "name"), FieldState::Shown("Sheet 1".into()));
     let parts = Content(vec![Part::Text("Material: ".into()), field(Source::Component, "material"), Part::Text(".".into())]);
     for component in [Documented::Gone, Documented::Nothing, present] {
-        assert_eq!(Values { drawing: &d, sheet: 0, component }.text(&parts), "Material: .");
+        assert_eq!(Values { drawing: &d, sheet: 0, component, parameters: Parameters::Nothing }.text(&parts), "Material: .");
     }
+}
+
+/// A parameter field reads what the engine hands in for its name: the value as written, empty for
+/// one that fails to evaluate, lost for a name the design no longer has; lost for every name when
+/// the design can't be read, and empty when the sheet reads no design. Its key is any name: which
+/// names a design has is the engine's to check.
+#[test]
+fn a_parameter_field_reads_shown_empty_or_lost() {
+    let d = drawing();
+    let read = BTreeMap::from([("Length".to_string(), Some("50 mm".to_string())), ("Loop".to_string(), None)]);
+    let state = |parameters, key| Values { drawing: &d, sheet: 0, component: Documented::Nothing, parameters }.state(Source::Parameter, key);
+    assert_eq!(state(Parameters::Present(&read), "Length"), FieldState::Shown("50 mm".into()));
+    assert_eq!(state(Parameters::Present(&read), "Loop"), FieldState::Empty, "a parameter that fails to evaluate");
+    assert_eq!(state(Parameters::Present(&read), "Width"), FieldState::Lost, "a parameter the design no longer has");
+    assert_eq!(state(Parameters::Gone, "Length"), FieldState::Lost);
+    assert_eq!(state(Parameters::Nothing, "Length"), FieldState::Empty);
+    assert_eq!(state(Parameters::Present(&read), ""), FieldState::Unknown, "a field names its parameter");
+    let parts = Content(vec![Part::Text("L = ".into()), field(Source::Parameter, "Length"), field(Source::Parameter, "Width")]);
+    let values = Values { drawing: &d, sheet: 0, component: Documented::Nothing, parameters: Parameters::Present(&read) };
+    assert_eq!(values.text(&parts), "L = 50 mm");
+    assert_eq!(values.empty_fields(&parts), ["parameter.Width"]);
 }
 
 /// A sheet's scale is the one its base views share, written as a view's scale is: a projected view's
@@ -266,7 +289,7 @@ fn a_field_its_source_lacks_reads_unknown() {
     let d = drawing();
     let metadata = Metadata::default();
     let bracket = Component { name: "Bracket", metadata: &metadata, properties: None, material: None, mass: None };
-    let values = Values { drawing: &d, sheet: 0, component: Documented::Present(bracket) };
+    let values = Values { drawing: &d, sheet: 0, component: Documented::Present(bracket), parameters: Parameters::Nothing };
     assert_eq!(values.state(Source::Component, "weight"), FieldState::Unknown);
     assert_eq!(values.state(Source::Sheet, "scales"), FieldState::Unknown);
     assert_eq!(values.state(Source::Component, "name"), FieldState::Shown("Bracket".into()));

@@ -62,7 +62,7 @@ impl JsonSchema for ContentParam {
     }
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
         json_schema!({
-            "description": "What a note says: plain text, or a list of {text} and {field: {source: component|drawing|sheet|revision, key, format?}}.",
+            "description": "What a note says: plain text, or a list of {text} and {field: {source: component|drawing|sheet|revision|parameter (key: a design parameter by name), key, format?}}.",
             "anyOf": [{"type": "string"}, {"type": "array"}]
         })
     }

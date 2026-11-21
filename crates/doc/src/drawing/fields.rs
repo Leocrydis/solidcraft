@@ -20,7 +20,11 @@
 //!   one of projected views only, shows the scale its views draw at. A sheet whose base views (or,
 //!   without any, its views) differ in scale shows none, as each view then carries its own scale label;
 //! - **revision:** the newest revision row's fields ([`Field`]);
-//! - **prompt:** any key; answers come with templates, so a prompt shows [`MISSING`] until then.
+//! - **prompt:** any key; answers come with templates, so a prompt shows [`MISSING`] until then;
+//! - **parameter:** any key, a parameter of the design the sheet reads, by its name: its value in
+//!   its own unit, as the engine writes it ([`Parameters`]). One the design no longer has reads lost,
+//!   one that fails to evaluate reads empty. A name the design doesn't have is refused where a note
+//!   is given (the engine knows the design; this layer doesn't).
 
 use solidcraft_geom::cell::{Content, MISSING, Part, Source};
 use solidcraft_geom::revision::{Field, RevisionRow};
@@ -68,6 +72,18 @@ impl<'a> Documented<'a> {
     }
 }
 
+/// What the parameters of the design a sheet reads say, for the parameter fields asked of it.
+#[derive(Clone, Copy, Debug)]
+pub enum Parameters<'a> {
+    /// No design to read: every parameter field reads empty.
+    Nothing,
+    /// The design can't be read: every parameter field reads lost.
+    Gone,
+    /// Each asked name the design has, with its value as written (none: it fails to evaluate). A
+    /// name not in the map is one the design doesn't have, and reads lost.
+    Present(&'a std::collections::BTreeMap<String, Option<String>>),
+}
+
 /// What a field reads.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FieldState {
@@ -88,7 +104,7 @@ pub fn has_key(source: Source, key: &str) -> bool {
         Source::Drawing => DRAWING.contains(&key) || property,
         Source::Sheet => SHEET.contains(&key),
         Source::Revision => Field::ALL.iter().any(|f| f.key() == key),
-        Source::Prompt => !key.is_empty(),
+        Source::Prompt | Source::Parameter => !key.is_empty(),
         Source::Row => false,
     }
 }
@@ -135,6 +151,7 @@ pub struct Values<'a> {
     pub drawing: &'a Drawing,
     pub sheet: usize,
     pub component: Documented<'a>,
+    pub parameters: Parameters<'a>,
 }
 
 impl Values<'_> {
@@ -154,6 +171,17 @@ impl Values<'_> {
     pub fn state(&self, source: Source, key: &str) -> FieldState {
         if !has_key(source, key) {
             return FieldState::Unknown;
+        }
+        if source == Source::Parameter {
+            return match self.parameters {
+                Parameters::Present(read) => match read.get(key) {
+                    Some(Some(value)) if !value.is_empty() => FieldState::Shown(value.clone()),
+                    Some(_) => FieldState::Empty,
+                    None => FieldState::Lost,
+                },
+                Parameters::Gone => FieldState::Lost,
+                Parameters::Nothing => FieldState::Empty,
+            };
         }
         match self.field(source, key) {
             Some(value) if !value.is_empty() => FieldState::Shown(value),
@@ -224,7 +252,7 @@ impl Values<'_> {
                     _ => key.strip_prefix(PROPERTIES).and_then(|name| c.properties?.get(name)).cloned(),
                 }
             }
-            Source::Prompt | Source::Row => None,
+            Source::Prompt | Source::Row | Source::Parameter => None,
         }
     }
 }

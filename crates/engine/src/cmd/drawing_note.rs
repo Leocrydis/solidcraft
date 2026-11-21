@@ -40,7 +40,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .params(
             "anchor: {sheet: id or name}, {view: id}, {edge: {view, edge}} or {corner: {view, corner}} (an edge or a corner as drawing.dimension.add \
              takes it; its leader ends there); at: [x, y] on paper in mm, from the sheet's lower-left corner or the view's centre; content: text, \
-             or [{text} or {field: {source: component|drawing|sheet|revision, key, format?}}]; cap_mm?: 0.5..100, its text height; branches?: [{edge} or \
+             or [{text} or {field: {source: component|drawing|sheet|revision|parameter (key: a design parameter by name), key, format?}}]; cap_mm?: 0.5..100, its text height; branches?: [{edge} or \
              {corner}], more leaders of a note on a view, 16 leaders in all, its anchor's included → what drawing.note.inspect answers \
              for it. Saved by name, never the point picked; an edge or a corner on a part its view doesn't \
              draw is refused. One undo step; no model is evaluated.",
@@ -104,6 +104,7 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(view) = note.anchor.view() {
         check_drawn(&record, view, note.paths(), ADD)?;
     }
+    check_parameters(s, &record, record.sheet_of(&note.anchor), &note.content, ADD)?;
     note.id = record.allocate_id(&mut s.ids).map_err(|e| bad(ADD, e.to_string()))?;
     let id = note.id;
     s.edit_drawing(ADD, |d| {
@@ -117,6 +118,11 @@ fn edit(s: &mut Session, p: &Value) -> Result<Value> {
     let request: EditParams = crate::schema::read(EDIT, p)?;
     let id = request.note.0;
     let branches = request.set.branches.map(|set| new_branches(s, id, set)).transpose()?;
+    if let Some(content) = &request.set.content {
+        let record = s.drawing(EDIT)?;
+        let note = record.notes.by_id(id).ok_or_else(|| bad(EDIT, format!("the drawing has no note {}", ids::encode(id))))?;
+        check_parameters(s, record, record.sheet_of(&note.anchor), &content.0, EDIT)?;
+    }
     let changed = s.edit_drawing(EDIT, |d| {
         let at = d.notes.index_of(id).ok_or_else(|| bad(EDIT, format!("the drawing has no note {}", ids::encode(id))))?;
         let Some(note) = d.notes.get_mut(at).map(Arc::make_mut) else { return Ok(Vec::new()) };
@@ -141,6 +147,41 @@ fn edit(s: &mut Session, p: &Value) -> Result<Value> {
     })?;
     let reply = EditResult { note: ids::encode(id), changed, param_warnings: Vec::new() };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// Each parameter field of `content` names a parameter of the design sheet `at` of `d` reads its
+/// parameters from ([`crate::title_block_text::parameter_design`]): a name it doesn't have is
+/// refused, with the closest one when it is near enough to be a typo.
+fn check_parameters(s: &Session, d: &solidcraft_doc::drawing::Drawing, at: Option<usize>, content: &Content, cmd: &str) -> Result<()> {
+    let mut asked = content.0.iter().filter_map(|part| match part {
+        Part::Field { source: solidcraft_geom::cell::Source::Parameter, key, .. } => Some(key.as_str()),
+        _ => None,
+    });
+    let Some(first) = asked.next() else { return Ok(()) };
+    let design = match at.and_then(|at| crate::title_block_text::parameter_design(s, d, at)) {
+        Some(Some(design)) => design,
+        Some(None) => return Err(bad(cmd, format!("parameter `{first}`: the design its sheet reads can't be read"))),
+        None => return Err(bad(cmd, format!("parameter `{first}`: its sheet reads no design"))),
+    };
+    let defs = design.doc.param_defs();
+    for name in std::iter::once(first).chain(asked) {
+        if !defs.iter().any(|def| def.name == name) {
+            let near = (name.chars().count() / 3).max(1);
+            let closest = defs
+                .iter()
+                .map(|def| (super::edit_distance(&name.to_lowercase(), &def.name.to_lowercase()), def.name.as_str()))
+                .filter(|(distance, _)| *distance <= near)
+                .min_by_key(|(distance, _)| *distance);
+            return Err(bad(
+                cmd,
+                match closest {
+                    Some((_, closest)) => format!("the design has no parameter `{name}`; did you mean `{closest}`?"),
+                    None => format!("the design has no parameter `{name}`"),
+                },
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// `pick` as a branch, saved by name as an anchor's edge or corner is.

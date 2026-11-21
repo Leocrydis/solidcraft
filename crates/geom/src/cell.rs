@@ -66,6 +66,8 @@ pub enum Source {
     /// The row of a sheet table the cell is on: a parts list's bill of materials row. A title
     /// block has no rows.
     Row,
+    /// A parameter of the design the sheet reads, by its name: its value in its own unit.
+    Parameter,
 }
 
 /// One part of a cell's content. Externally tagged: `{"text": "Sheet "}`,

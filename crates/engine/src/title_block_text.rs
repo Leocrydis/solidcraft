@@ -18,7 +18,7 @@ use solidcore_record::Vec2;
 use solidcraft_doc::Document;
 use solidcraft_doc::bom::{Mass, Tree};
 use solidcraft_doc::drawing::Drawing;
-use solidcraft_doc::drawing::fields::{Component, Documented, Values};
+use solidcraft_doc::drawing::fields::{Component, Documented, Parameters, Values};
 use solidcraft_geom::cell::{Content, HAlign, Part, Source, Warning, place_lines};
 use solidcraft_geom::paper::text::{Font, TextRun};
 use solidcraft_geom::title_block::{CellKind, TextCell, TitleBlock, TitleBlockLayout};
@@ -114,18 +114,29 @@ pub fn read<'c>(s: &Session, tree: &mut Tree<'_>, d: &Drawing, at: usize, conten
 /// `answer` given what sheet `at` of `d` reads its fields from ([`Values`]), for `contents`: the
 /// component the sheet documents, in the design its source names ([`Session::drawn`]; one that
 /// can't be read has nothing to show), weighed in `tree`, the tree of `s`'s design, only when one of
-/// them reads its material or mass. [`read`] and a note's inspect read through this one rule.
+/// them reads its material or mass. A parameter field reads the parameters of the design
+/// [`parameter_design`] names, evaluated (parameters only, never the model) only when one of them
+/// asks, as the design stands: its active configuration. [`read`] and a note's inspect read
+/// through this one rule.
 pub fn with_values<'c, R>(
     s: &Session,
     tree: &mut Tree<'_>,
     d: &Drawing,
     at: usize,
-    mut contents: impl Iterator<Item = &'c Content>,
+    contents: impl Iterator<Item = &'c Content>,
     answer: impl FnOnce(&Values) -> R,
 ) -> R {
-    let weighs = contents.any(|content| {
-        content.0.iter().any(|part| matches!(part, Part::Field { source: Source::Component, key, .. } if key == "material" || key == "mass"))
-    });
+    let mut weighs = false;
+    let mut asked = std::collections::BTreeSet::new();
+    for part in contents.flat_map(|content| content.0.iter()) {
+        match part {
+            Part::Field { source: Source::Component, key, .. } if key == "material" || key == "mass" => weighs = true,
+            Part::Field { source: Source::Parameter, key, .. } => {
+                asked.insert(key.as_str());
+            }
+            _ => {}
+        }
+    }
     // What the model says of the component it documents: a component since deleted, or of a design
     // that can't be read, has nothing.
     let documents = d.sheets.get(at).and_then(|sheet| sheet.documents);
@@ -142,7 +153,53 @@ pub fn with_values<'c, R>(
         (Some(None), _) => Documented::Gone,
         _ => Documented::Nothing,
     };
-    answer(&Values { drawing: d, sheet: at, component })
+    let read =
+        if asked.is_empty() { None } else { parameter_design(s, d, at).map(|design| design.map(|design| parameter_values(&design.doc, &asked))) };
+    let parameters = match &read {
+        Some(Some(read)) => Parameters::Present(read),
+        Some(None) => Parameters::Gone,
+        None => Parameters::Nothing,
+    };
+    answer(&Values { drawing: d, sheet: at, component, parameters })
+}
+
+/// The design whose parameters sheet `at` of `d` reads: the one whose component the sheet documents,
+/// else the drawing's first. None when there is neither; `Some(None)` when it can't be read.
+pub fn parameter_design<'s>(s: &'s Session, d: &Drawing, at: usize) -> Option<Option<&'s Session>> {
+    let documents = d.sheets.get(at).and_then(|sheet| sheet.documents).map(|documents| documents.source);
+    let source = documents.or_else(|| d.sources.first().map(|source| source.id))?;
+    Some(s.drawn(d, source).ok())
+}
+
+/// The parameters `names` of `doc` it has, each as a sheet writes its value (none: it fails to
+/// evaluate). Every parameter is evaluated once, without the model.
+fn parameter_values(doc: &Document, names: &std::collections::BTreeSet<&str>) -> std::collections::BTreeMap<String, Option<String>> {
+    let defs = doc.param_defs();
+    let (values, _) = doc.param_values();
+    names
+        .iter()
+        .filter_map(|name| {
+            defs.iter().find(|def| def.name == *name)?;
+            // The unit `param_display_value` writes the value in: the parameter's own, or its kind's.
+            let unit = match doc.param(name) {
+                Some(param) => param.unit.clone(),
+                None => values.get(*name).and_then(|value| value.kind()).map(|kind| kind.default_unit().to_string()).unwrap_or_default(),
+            };
+            let shown = doc.param_display_value(&values, name).map(|value| written(value, &unit));
+            Some((name.to_string(), shown))
+        })
+        .collect()
+}
+
+/// A parameter's value in its own unit as a sheet writes it: twelve significant digits, then the
+/// unit (`50 mm`, `2.5 in`), `°` for degrees, nothing for a unit-less number.
+fn written(value: f64, unit: &str) -> String {
+    let number = solidcraft_doc::expr::round_reported(value);
+    match unit.trim() {
+        "" => format!("{number}"),
+        "deg" => format!("{number}°"),
+        unit => format!("{number} {unit}"),
+    }
 }
 
 /// Component `id` of the design (0: the design itself) as a title block's fields read it, with
