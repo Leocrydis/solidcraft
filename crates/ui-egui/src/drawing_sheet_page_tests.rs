@@ -131,6 +131,65 @@ fn an_open_brace_opens_the_list_narrowed_to_what_follows() {
     assert!(h.widget("IN {mat}").is_some(), "the pick completes what was typed");
 }
 
+/// Your own alias, made in the smart callout dialog, stands for a field: `{THK}` typed in a note
+/// saves the field it stands for, and the note never needs the alias again. The alias is kept in
+/// Preferences and listed under Your aliases, where its remove target drops it. A built-in short
+/// name is refused as an alias.
+#[test]
+fn an_alias_made_in_the_dialog_saves_its_field_and_can_be_removed() {
+    let (mut h, _) = plate_sheet();
+    h.app.run("parameters.change", json!({"name": "Length", "expression": "100 mm"})).unwrap();
+    h.app.preferences.smart_callout_aliases.clear();
+    assert!(crate::drawing_workspace::start(&mut h.app, "drawing.note"));
+    h.frames(4);
+    let fields = crate::scenario::rect_of("drawing:note:fields").unwrap().center();
+    h.step(&json!({"click": [fields.x, fields.y]})).unwrap();
+    h.frames(4);
+    let type_in = |h: &mut Harness, key: &str, text: &str| {
+        let rect = crate::scenario::rect_of(key).unwrap();
+        h.step(&json!({"click": [rect.right() - 20.0, rect.center().y]})).unwrap();
+        h.step(&json!({"text": text})).unwrap();
+        h.frames(2);
+    };
+    type_in(&mut h, "smart_callout:alias", "mat");
+    assert!(h.widget(solidcraft_ui_text::tr("ui.smart_callout.alias_builtin")).is_some(), "a built-in name is refused");
+    h.step(&json!({"key": "A", "cmd": true})).unwrap();
+    h.step(&json!({"text": "THK"})).unwrap();
+    h.frames(2);
+    h.step(&json!({"click": {"handle": "dialog:list:smart_callout:p.Length"}})).unwrap();
+    h.frames(2);
+    h.step(&json!({"click": {"handle": "dialog:action:smart_callout_add_alias"}})).unwrap();
+    h.frames(4);
+    assert_eq!(h.app.preferences.smart_callout_aliases.get("THK").map(String::as_str), Some("p.Length"));
+    assert!(crate::scenario::rect_of("dialog:list:smart_callout:alias:THK").is_some(), "listed under Your aliases");
+
+    let text = crate::scenario::rect_of("drawing:note:text").unwrap().center();
+    h.step(&json!({"click": [text.x, text.y]})).unwrap();
+    h.step(&json!({"text": "L {THK}"})).unwrap();
+    h.frames(4);
+    // Away from the dialog, on the paper's lower left.
+    let paper = crate::scenario::rect_of("sheet:paper").unwrap();
+    h.step(&json!({"click": [paper.left() + 80.0, paper.bottom() - 80.0]})).unwrap();
+    h.frames(4);
+    let drawing = h.app.session.drawing("drawing.inspect").unwrap();
+    let note = &drawing.notes[0];
+    assert_eq!(solidcraft_engine::doc::drawing::short_form::to_text(&note.content), "L {p.Length}", "the note saves the field, not the alias");
+
+    assert!(crate::drawing_workspace::start(&mut h.app, "drawing.note"));
+    h.frames(4);
+    let fields = crate::scenario::rect_of("drawing:note:fields").unwrap().center();
+    h.step(&json!({"click": [fields.x, fields.y]})).unwrap();
+    h.frames(4);
+    // The aliases come last in the list: the search narrows it to the one.
+    let search = crate::scenario::rect_of("smart_callout:search").unwrap().center();
+    h.step(&json!({"click": [search.x, search.y]})).unwrap();
+    h.step(&json!({"text": "THK"})).unwrap();
+    h.frames(2);
+    h.step(&json!({"click": {"handle": "dialog:list:smart_callout:alias:THK:remove"}})).unwrap();
+    h.frames(4);
+    assert!(h.app.preferences.smart_callout_aliases.is_empty(), "removed");
+}
+
 /// A right-click on the sheet opens the menu a sketch's right-click opens: it selects what is under
 /// the pointer first, offers Edit and Delete for it, then the tools, then Undo and Redo. On empty
 /// paper the selection stays, and a right-click with a tool in hand puts the tool down.

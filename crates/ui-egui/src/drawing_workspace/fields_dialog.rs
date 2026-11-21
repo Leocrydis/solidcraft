@@ -14,6 +14,9 @@ pub(super) struct Dialog {
     pub(super) search: String,
     /// Every parameter of the design, not only its user parameters and favourites.
     pub(super) all: bool,
+    /// An alias being made: its text, and the short name of the field it will stand for.
+    pub(super) alias: String,
+    pub(super) target: String,
 }
 
 /// One field the list offers: its section, its name in words and its short name.
@@ -31,10 +34,12 @@ enum Section {
     Drawing,
     Sheet,
     Revision,
+    /// The user's own aliases.
+    Aliases,
 }
 
 impl Section {
-    const ALL: [Section; 5] = [Section::Part, Section::Parameters, Section::Drawing, Section::Sheet, Section::Revision];
+    const ALL: [Section; 6] = [Section::Part, Section::Parameters, Section::Drawing, Section::Sheet, Section::Revision, Section::Aliases];
 
     fn of(source: Source) -> Option<Section> {
         match source {
@@ -54,6 +59,7 @@ impl Section {
             Section::Drawing => "ui.smart_callout.drawing",
             Section::Sheet => "ui.smart_callout.sheet",
             Section::Revision => "ui.smart_callout.revision",
+            Section::Aliases => "ui.smart_callout.aliases",
         })
     }
 }
@@ -112,7 +118,19 @@ fn entries(app: &SolveApp, at: Option<usize>, all: bool) -> Vec<Entry> {
             out.push(Entry { section: Section::Parameters, label, short });
         }
     }
+    for (alias, target) in &app.preferences.smart_callout_aliases {
+        out.push(Entry { section: Section::Aliases, label: format!("{alias} \u{2192}"), short: target.clone() });
+    }
     out
+}
+
+/// What the alias row says is wrong with the alias being made, in the user's language.
+fn refusal(why: short_form::AliasRefused) -> &'static str {
+    solidcraft_ui_text::tr(match why {
+        short_form::AliasRefused::Written => "ui.smart_callout.alias_written",
+        short_form::AliasRefused::BuiltIn => "ui.smart_callout.alias_builtin",
+        short_form::AliasRefused::NotAField => "ui.smart_callout.alias_not_a_field",
+    })
 }
 
 /// Whether `entry` matches what was searched: its name in words or its short name, ignoring case.
@@ -123,7 +141,9 @@ fn matches(entry: &Entry, search: &str) -> bool {
 
 /// Draw the dialog for the Note panel's `text` (note `note`, or one being placed). `completing` is
 /// what follows an unclosed `{` at the caret, when there is one: the list narrows to it and the
-/// search box shows it. Returns whether to close, and the short name of the field picked.
+/// search box shows it. Returns whether to close, the short name of the field picked, and the
+/// user's aliases when they changed. A field clicked while an alias is being typed is what the alias
+/// will stand for, not a pick.
 pub(super) fn show(
     app: &SolveApp,
     ctx: &egui::Context,
@@ -131,12 +151,13 @@ pub(super) fn show(
     text: &str,
     note: Option<u64>,
     completing: Option<&str>,
-) -> (bool, Option<String>) {
+) -> (bool, Option<String>, Option<std::collections::BTreeMap<String, String>>) {
+    let mut aliases = None;
     let tr = solidcraft_ui_text::tr;
     let at = sheet_at(app, note);
     let entries = entries(app, at, dialog.all);
     let search = completing.map_or(dialog.search.clone(), str::to_string);
-    let reads = match short_form::from_text(text) {
+    let reads = match short_form::from_text(&short_form::expand(text, &app.preferences.smart_callout_aliases)) {
         Ok(content) => match (app.session.drawing("drawing.inspect"), at) {
             (Ok(drawing), Some(at)) => Some(solidcraft_engine::title_block_text::note_preview(&app.session, drawing, at, &content)),
             _ => None,
@@ -168,19 +189,51 @@ pub(super) fn show(
                     }
                     for entry in rows {
                         let row = format!("{}    {{{}}}", entry.label, entry.short);
-                        if ui_kit::list_picker(ui, &format!("smart_callout:{}", entry.short), &row, false).clicked() {
-                            picked = Some(entry.short.clone());
+                        if entry.section == Section::Aliases {
+                            let alias = entry.label.trim_end_matches(" \u{2192}").to_string();
+                            if ui_kit::list_row(ui, &format!("smart_callout:alias:{alias}"), &row).clicked() {
+                                let mut kept = app.preferences.smart_callout_aliases.clone();
+                                kept.remove(&alias);
+                                aliases = Some(kept);
+                            }
+                        } else if ui_kit::list_picker(ui, &format!("smart_callout:{}", entry.short), &row, false).clicked() {
+                            if dialog.alias.trim().is_empty() {
+                                picked = Some(entry.short.clone());
+                            } else {
+                                dialog.target = entry.short.clone();
+                            }
                         }
                     }
                 }
             });
+            // The one row that makes an alias: its text, the field it stands for, Add.
+            let why = short_form::alias_refused(&dialog.alias, &dialog.target);
+            let full = app.preferences.smart_callout_aliases.len() >= short_form::MAX_ALIASES;
+            for (key, label, value, hint) in [
+                ("smart_callout:alias", tr("ui.smart_callout.alias"), &mut dialog.alias, "THK"),
+                ("smart_callout:alias_for", tr("ui.smart_callout.alias_for"), &mut dialog.target, "p.Thickness"),
+            ] {
+                let top = ui.cursor().top();
+                ui_kit::text_row(ui, label, value, hint);
+                crate::scenario::publish_rect(key, egui::Rect::from_x_y_ranges(ui.max_rect().x_range(), top..=ui.cursor().top()));
+            }
+            if ui_kit::action_row(ui, "smart_callout_add_alias", tr("ui.smart_callout.alias_add")) && why.is_none() && !full {
+                let mut kept = app.preferences.smart_callout_aliases.clone();
+                kept.insert(dialog.alias.trim().to_string(), dialog.target.trim().trim_start_matches('{').trim_end_matches('}').to_string());
+                aliases = Some(kept);
+                dialog.alias.clear();
+                dialog.target.clear();
+            }
+            if let Some(why) = why.filter(|_| !dialog.alias.trim().is_empty() || !dialog.target.trim().is_empty()) {
+                ui_kit::status_line(ui, refusal(why), ui_kit::StatusTone::Dim);
+            }
             ui.separator();
             if let Some(reads) = &reads {
                 ui_kit::value_row(ui, tr("ui.smart_callout.reads"), reads);
             }
         });
     });
-    (closed, picked)
+    (closed, picked, aliases)
 }
 
 use solidcraft_theme::Tokens;

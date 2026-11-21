@@ -1869,6 +1869,10 @@ preference_settings! {
     agent_models: std::collections::BTreeMap<String, String> = Default::default();
     /// "Always allow" answers: per agent, the tools it may use without asking.
     agent_always_allow: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    /// Your own smart callout aliases: text typed in braces in a note (`THK`), each with the short
+    /// name of the field it stands for (`p.Thickness`). Yours alone; none are shipped, and restoring
+    /// defaults keeps them.
+    smart_callout_aliases: std::collections::BTreeMap<String, String> = Default::default();
     /// Whether the chat is in its own window instead of the side panel, and that window's place
     /// and size as the system last reported them (`[x, y, width, height]`, points; `x` can be
     /// negative or past the main screen when the window sits on another one).

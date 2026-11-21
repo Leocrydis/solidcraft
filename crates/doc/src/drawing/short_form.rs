@@ -3,6 +3,9 @@
 //! field a note may hold has exactly one short name, and each short name names exactly one field, so
 //! a note's content goes to text and back unchanged ([`to_text`], [`from_text`]). `{{` and `}}` are a
 //! brace each, as in a dimension's text template. A `row` field (a parts list's cell) has none.
+//! A person's own aliases (`{THK}` for `{p.Thickness}`) are theirs, kept by the app: [`expand`]
+//! writes each as the short name it stands for before the text is read, so a note saves the field,
+//! never the alias.
 //!
 //! | Short name | Field |
 //! |---|---|
@@ -149,6 +152,74 @@ pub fn from_text(text: &str) -> Result<Content, String> {
         parts.push(Part::Text(run));
     }
     Ok(Content(parts))
+}
+
+/// The most aliases one person keeps.
+pub const MAX_ALIASES: usize = 200;
+/// The longest an alias may be, in characters.
+pub const MAX_ALIAS_CHARS: usize = 32;
+
+/// Why an alias can't stand for a field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AliasRefused {
+    /// Empty, longer than [`MAX_ALIAS_CHARS`], or with a character other than a letter, a digit,
+    /// `.`, `_` or `-`.
+    Written,
+    /// A built-in short name: it keeps its own meaning.
+    BuiltIn,
+    /// What it stands for is no field's short name.
+    NotAField,
+}
+
+/// Why `alias` can't stand for the field short name `target` names, when it can't.
+pub fn alias_refused(alias: &str, target: &str) -> Option<AliasRefused> {
+    let alias = alias.trim();
+    let written =
+        !alias.is_empty() && alias.chars().count() <= MAX_ALIAS_CHARS && alias.chars().all(|c| c.is_alphanumeric() || matches!(c, '.' | '_' | '-'));
+    if !written {
+        return Some(AliasRefused::Written);
+    }
+    if field_of(alias).is_some() || field_of(&alias.to_lowercase()).is_some() {
+        return Some(AliasRefused::BuiltIn);
+    }
+    field_of(target.trim().trim_start_matches('{').trim_end_matches('}')).is_none().then_some(AliasRefused::NotAField)
+}
+
+/// `text` with each `{alias}` of `aliases` (alias to the short name it stands for, matched ignoring
+/// case) written as the short name it stands for, so [`from_text`] reads it as that field. A built-in
+/// short name, a doubled brace and anything else stay as typed.
+pub fn expand(text: &str, aliases: &std::collections::BTreeMap<String, String>) -> String {
+    if aliases.is_empty() || !text.contains('{') {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        if let Some(brace) = after.strip_prefix('{') {
+            out.push_str("{{");
+            rest = brace;
+            continue;
+        }
+        let Some(close) = after.find(['}', '{']).filter(|at| after[*at..].starts_with('}')) else {
+            out.push('{');
+            rest = after;
+            continue;
+        };
+        let name = after[..close].trim();
+        let target = (field_of(name).is_none())
+            .then(|| aliases.iter().find(|(alias, _)| alias.eq_ignore_ascii_case(name) || alias.to_lowercase() == name.to_lowercase()))
+            .flatten()
+            .map(|(_, target)| target.as_str());
+        match target {
+            Some(target) => out.push_str(&format!("{{{target}}}")),
+            None => out.push_str(&rest[open..open + 1 + close + 1]),
+        }
+        rest = &after[close + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// A source as a field names it: `component`, `row` and so on.

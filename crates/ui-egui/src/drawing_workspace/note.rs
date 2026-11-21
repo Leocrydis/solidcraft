@@ -34,14 +34,17 @@ fn tr(key: &'static str) -> &'static str {
     solidcraft_ui_text::tr(key)
 }
 
-fn ready(text: &str) -> bool {
-    !text.trim().is_empty() && text.len() <= MAX_TEXT_BYTES && short_form::from_text(text).is_ok()
+fn ready(text: &str, aliases: &Aliases) -> bool {
+    !text.trim().is_empty() && text.len() <= MAX_TEXT_BYTES && short_form::from_text(&short_form::expand(text, aliases)).is_ok()
 }
+
+/// The user's own aliases (`app.preferences.smart_callout_aliases`).
+type Aliases = std::collections::BTreeMap<String, String>;
 
 /// What `text`, typed in the Text box, gives a note's `content`: plain text when it holds no field
 /// (as a note always was), else its parts, each `{short name}` the field it names.
-fn content_of(text: &str) -> Result<serde_json::Value, String> {
-    let content = short_form::from_text(text)?;
+fn content_of(text: &str, aliases: &Aliases) -> Result<serde_json::Value, String> {
+    let content = short_form::from_text(&short_form::expand(text, aliases))?;
     let plain: Option<String> = content.0.iter().map(|part| if let Part::Text(text) = part { Some(text.as_str()) } else { None }).collect();
     if let Some(plain) = plain {
         return Ok(json!(plain));
@@ -57,6 +60,7 @@ pub(super) fn editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Option<u64
         };
         app.drawing_workspace.note = text.map(|text| Draft { text, ..Draft::default() });
     }
+    let aliases = app.preferences.smart_callout_aliases.clone();
     let (cancel, save) = super::inset(ui, |ui| {
         let mut valid = false;
         if let Some(draft) = app.drawing_workspace.note.as_mut() {
@@ -64,7 +68,7 @@ pub(super) fn editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Option<u64
             let field = ui_kit::multiline_text_field(ui, tr("ui.drawing_panel.text"), id, &mut draft.text);
             crate::scenario::publish_rect("drawing:note:text", field.rect);
             draft.text_id = Some(id);
-            valid = ready(&draft.text);
+            valid = ready(&draft.text, &aliases);
             // The one control beside the box: the smart callout dialog.
             let fields = ui_kit::row(ui, "", |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui_kit::button(ui, tr("ui.smart_callout.open"), Button::Normal))
@@ -77,7 +81,7 @@ pub(super) fn editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Option<u64
             if field.has_focus() && completing(&draft.text, caret(ui.ctx(), id)).is_some() {
                 draft.fields.get_or_insert_with(Default::default);
             }
-            if let Err(why) = short_form::from_text(&draft.text) {
+            if let Err(why) = short_form::from_text(&short_form::expand(&draft.text, &aliases)) {
                 let message = solidcraft_ui_text::format("ui.drawing_note.unreadable", &[("why", &why)]);
                 ui_kit::status_line(ui, &message, ui_kit::StatusTone::Warning);
             } else if selected.is_none() {
@@ -99,7 +103,7 @@ pub(super) fn editor(app: &mut SolveApp, ui: &mut egui::Ui, selected: Option<u64
         && let Some(id) = selected
         && let Some(draft) = app.drawing_workspace.note.as_ref()
     {
-        let content = match content_of(&draft.text) {
+        let content = match content_of(&draft.text, &app.preferences.smart_callout_aliases) {
             Ok(content) => content,
             Err(why) => return app.set_status(why, true),
         };
@@ -135,8 +139,11 @@ fn fields_dialog(app: &mut SolveApp, ctx: &egui::Context, selected: Option<u64>)
     if let Some(mut dialog) = draft.fields.take() {
         let at = draft.text_id.and_then(|id| caret(ctx, id));
         let typing = completing(&draft.text, at);
-        let (closed, picked) =
+        let (closed, picked, aliases) =
             super::fields_dialog::show(app, ctx, &mut dialog, &draft.text, selected, typing.as_ref().map(|(_, typed)| typed.as_str()));
+        if let Some(aliases) = aliases {
+            app.preferences.smart_callout_aliases = aliases;
+        }
         if let Some(short) = picked {
             let token = format!("{{{short}}}");
             let chars: Vec<char> = draft.text.chars().collect();
@@ -166,11 +173,11 @@ fn fields_dialog(app: &mut SolveApp, ctx: &egui::Context, selected: Option<u64>)
 }
 
 pub(crate) fn on_sheet(app: &mut SolveApp, painter: &egui::Painter, at: crate::drawing_sheet_page::OnScreen, point: Vec2, sheet: u64, clicked: bool) {
-    if !app.drawing_workspace.note.as_ref().is_some_and(|draft| ready(&draft.text)) {
+    if !app.drawing_workspace.note.as_ref().is_some_and(|draft| ready(&draft.text, &app.preferences.smart_callout_aliases)) {
         return;
     }
     let Some(mut draft) = app.drawing_workspace.note.take() else { return };
-    let Ok(content) = content_of(&draft.text) else {
+    let Ok(content) = content_of(&draft.text, &app.preferences.smart_callout_aliases) else {
         app.drawing_workspace.note = Some(draft);
         return;
     };

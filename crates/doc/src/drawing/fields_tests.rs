@@ -354,3 +354,23 @@ fn a_notes_content_goes_to_text_and_back_unchanged() {
         assert!(e.contains(why), "{typed}: {e}");
     }
 }
+
+/// A person's alias reads as the field it stands for, ignoring case; a built-in short name, a doubled
+/// brace, an unclosed brace and a name nobody made stay as typed. A built-in name, a character an
+/// alias can't have and a target that is no field are refused as an alias.
+#[test]
+fn an_alias_reads_as_its_field_and_a_built_in_name_is_refused() {
+    use crate::drawing::short_form::{AliasRefused, alias_refused, expand};
+    let aliases = BTreeMap::from([("THK".to_string(), "p.Thickness".to_string()), ("MATL".to_string(), "mat".to_string())]);
+    assert_eq!(expand("T={thk} {MATL} {mat} {{THK}} {nope}", &aliases), "T={p.Thickness} {mat} {mat} {{THK}} {nope}");
+    assert_eq!(expand("no braces", &aliases), "no braces");
+    assert_eq!(expand("{THK", &aliases), "{THK");
+    assert_eq!(alias_refused("THK", "p.Thickness"), None);
+    assert_eq!(alias_refused("THK", "{mat}"), None);
+    assert_eq!(alias_refused("mat", "pn"), Some(AliasRefused::BuiltIn));
+    assert_eq!(alias_refused("MAT", "pn"), Some(AliasRefused::BuiltIn));
+    assert_eq!(alias_refused("a b", "pn"), Some(AliasRefused::Written));
+    assert_eq!(alias_refused("", "pn"), Some(AliasRefused::Written));
+    assert_eq!(alias_refused(&"x".repeat(33), "pn"), Some(AliasRefused::Written));
+    assert_eq!(alias_refused("THK", "nothing"), Some(AliasRefused::NotAField));
+}
