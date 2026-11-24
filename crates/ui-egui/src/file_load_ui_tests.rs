@@ -595,6 +595,69 @@ fn reloading_a_point_cloud_on_a_network_location_asks_first() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `doc.open` with `new_tab` over the control channel lands in a tab of its own, even where the
+/// shown design is blank (an ordinary open replaces that one), and one that fails opens no tab.
+#[test]
+fn a_control_open_with_new_tab_lands_in_a_tab_of_its_own() {
+    let dir = scratch("control-new-tab");
+    let paths: Vec<String> = [("a", 5), ("b", 6)]
+        .into_iter()
+        .map(|(name, side)| {
+            let mut s = Session::default();
+            s.execute("solid.box", &json!({"length": side, "width": side, "height": side})).unwrap();
+            let path = dir.join(format!("{name}.solidcraft")).to_string_lossy().into_owned();
+            s.execute("file.save", &json!({"path": path})).unwrap();
+            path
+        })
+        .collect();
+    let mut w = Win::new();
+    let (tx, rx) = std::sync::mpsc::channel();
+    w.app.control_rx = Some(rx);
+    let open = |w: &mut Win, params: serde_json::Value| {
+        let (req, reply) = crate::control::ControlRequest::new("engine.execute", json!({"command": "doc.open", "params": params}));
+        tx.send(req).unwrap();
+        for _ in 0..100_000 {
+            w.frame(vec![]);
+            if let Ok(reply) = reply.try_recv() {
+                return reply;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        panic!("no reply");
+    };
+
+    let blank = w.app.session.document_id.clone();
+    let reply = open(&mut w, json!({"path": paths[0], "new_tab": true}));
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!((w.app.docs.count(), w.app.docs.active), (2, 1), "the blank design keeps its tab");
+    assert_eq!(w.app.session.path.as_deref(), Some(paths[0].as_str()));
+    let reply = open(&mut w, json!({"path": paths[1], "new_tab": true}));
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert_eq!((w.app.docs.count(), w.app.docs.active), (3, 2));
+    assert_eq!(w.app.session.path.as_deref(), Some(paths[1].as_str()));
+    let shown: Vec<_> = crate::documents::open_sessions(&w.app).iter().map(|s| (s.document_id.clone(), s.path.clone())).collect();
+    assert_eq!(shown[0], (blank, None), "the design that was open is as it was");
+    assert_eq!(shown[1].1.as_deref(), Some(paths[0].as_str()));
+
+    let missing = dir.join("missing.solidcraft").to_string_lossy().into_owned();
+    let reply = open(&mut w, json!({"path": missing, "new_tab": true}));
+    assert_eq!(reply["ok"], false, "{reply}");
+    assert_eq!((w.app.docs.count(), w.app.docs.active), (3, 2), "a failed open opens no tab");
+
+    // Without it a blank design is replaced, as before.
+    let mut w = Win::new();
+    let (tx2, rx2) = std::sync::mpsc::channel();
+    w.app.control_rx = Some(rx2);
+    let (req, reply) = crate::control::ControlRequest::new("engine.execute", json!({"command": "doc.open", "params": {"path": paths[0]}}));
+    tx2.send(req).unwrap();
+    while reply.try_recv().is_err() {
+        w.frame(vec![]);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(w.app.docs.count(), 1, "the blank design was replaced");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// A control-channel (MCP) open is answered when the file is in, with the synchronous
 /// command's reply, and the window draws frames while it waits. Commands sent meanwhile wait.
 #[test]
@@ -1786,4 +1849,87 @@ fn an_internal_file_opened_by_itself_asks_and_each_answer_does_what_it_says() {
     assert!(app.internal_file.is_none() && app.session.path.is_none() && !app.session.is_dirty(), "a blank design");
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&lost);
+}
+
+/// Insert from Design (#6892): the window lists what another design holds, a sub-assembly with
+/// its parts under it, and Insert brings the ticked ones into this design as internal components
+/// of its own. Ticking a sub-assembly ticks everything under it and brings it whole; with one
+/// of its parts unticked, the parts left ticked come as parts. A design that holds nothing says
+/// so and shows no window.
+#[test]
+fn insert_from_design_lists_another_designs_internal_components_and_inserts_the_ticked_ones() {
+    solidcraft_engine::file_kinds_on_for_tests();
+    let dir = scratch("insert_from_design");
+    let text = |path: &std::path::Path| path.to_string_lossy().into_owned();
+    let run = |s: &mut Session, id: &str, params: serde_json::Value| s.execute(id, &params).unwrap_or_else(|e| panic!("{id}: {e}"));
+    for (name, height) in [("arm", 1), ("pin", 2), ("plate", 3)] {
+        let mut part = Session::default();
+        run(&mut part, "solid.box", json!({"length": 2, "width": 3, "height": height}));
+        run(&mut part, "file.save", json!({"path": text(&dir.join(format!("{name}.scprt")))}));
+    }
+    let mut hinge = Session::default();
+    run(&mut hinge, "file.new", json!({"kind": "assembly"}));
+    run(&mut hinge, "file.save", json!({"path": text(&dir.join("hinge.scasm"))}));
+    for name in ["arm", "pin"] {
+        run(&mut hinge, "component.insert_design", json!({"path": text(&dir.join(format!("{name}.scprt")))}));
+        run(&mut hinge, "component.make_internal", json!({"component": name}));
+    }
+    run(&mut hinge, "file.save", json!({}));
+    let source = dir.join("source.sc");
+    let mut made = Session::default();
+    run(&mut made, "file.save", json!({"path": text(&source)}));
+    for file in ["plate.scprt", "hinge.scasm"] {
+        run(&mut made, "component.insert_design", json!({"path": text(&dir.join(file))}));
+    }
+    for name in ["plate", "hinge"] {
+        run(&mut made, "component.make_internal", json!({"component": name}));
+    }
+    run(&mut made, "file.save", json!({}));
+    let empty = dir.join("empty.sc");
+    run(&mut Session::default(), "file.save", json!({"path": text(&empty)}));
+
+    let mut app = SolveApp::new(Session::default(), Default::default());
+    app.session.execute("file.save", &json!({"path": text(&dir.join("target.sc"))})).unwrap();
+    crate::insert_from_design::open(&mut app, &text(&empty));
+    assert!(app.insert_from_design.is_none(), "nothing to pick from, no window");
+    assert!(app.status.as_ref().is_some_and(|status| !status.2), "{:?}", app.status);
+
+    crate::insert_from_design::open(&mut app, &text(&source));
+    let shown = app.insert_from_design.clone().expect("the window shows");
+    let rows: Vec<(&str, &str, usize)> = shown.rows.iter().map(|row| (row.pick.as_str(), row.kind.as_str(), row.depth)).collect();
+    assert_eq!(
+        rows,
+        [("hinge.scasm", "assembly", 0), ("hinge.scasm/arm.scprt", "part", 1), ("hinge.scasm/pin.scprt", "part", 1), ("plate.scprt", "part", 0)],
+        "{shown:?}"
+    );
+    // Nothing ticked: Insert leaves the window as it is.
+    crate::insert_from_design::insert(&mut app);
+    assert!(app.insert_from_design.is_some());
+    // Ticking the sub-assembly ticks everything under it, and it comes whole.
+    let ticks = |app: &SolveApp| app.insert_from_design.as_ref().unwrap().rows.iter().map(|row| row.ticked).collect::<Vec<_>>();
+    fn window(app: &mut SolveApp) -> &mut crate::insert_from_design::InsertFromDesign {
+        app.insert_from_design.as_mut().unwrap()
+    }
+    crate::insert_from_design::tick(window(&mut app), 0, true);
+    assert_eq!(ticks(&app), [true, true, true, false]);
+    assert_eq!(crate::insert_from_design::picks(window(&mut app)), ["hinge.scasm"]);
+    // Unticking the pin leaves the sub-assembly unticked and mixed: the arm comes as a part.
+    crate::insert_from_design::tick(window(&mut app), 2, false);
+    assert_eq!(ticks(&app), [false, true, false, false]);
+    assert!(crate::insert_from_design::mixed(window(&mut app), 0));
+    assert_eq!(crate::insert_from_design::picks(window(&mut app)), ["hinge.scasm/arm.scprt"]);
+    // The pin ticked again: everything under the sub-assembly is ticked, so it is too.
+    crate::insert_from_design::tick(window(&mut app), 2, true);
+    assert_eq!(ticks(&app), [true, true, true, false]);
+    assert!(!crate::insert_from_design::mixed(window(&mut app), 0));
+    crate::insert_from_design::tick(window(&mut app), 3, true);
+    assert_eq!(crate::insert_from_design::picks(window(&mut app)), ["hinge.scasm", "plate.scprt"]);
+    crate::insert_from_design::insert(&mut app);
+    assert!(app.insert_from_design.is_none());
+    assert!(app.status.as_ref().is_some_and(|status| !status.2), "{:?}", app.status);
+    let links = app.session.execute("component.links", &json!({})).unwrap();
+    let names: Vec<&str> = links["links"].as_array().unwrap().iter().filter_map(|link| link["name"].as_str()).collect();
+    assert_eq!(names, ["hinge", "plate"], "{links}");
+    assert!(links["links"].as_array().unwrap().iter().all(|link| link["internal"] == true), "{links}");
+    let _ = std::fs::remove_dir_all(dir);
 }
